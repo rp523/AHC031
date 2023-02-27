@@ -2777,6 +2777,135 @@ use procon_reader::*;
 /*************************************************************************************
 *************************************************************************************/
 
+mod bitfield {
+    const BIT_WIDTH: usize = 63;
+    #[derive(Clone)]
+    pub struct BitField {
+        fields: Vec<u64>,
+        olen: usize,
+    }
+    impl BitField {
+        pub fn new(olen: usize) -> Self {
+            Self {
+                fields: vec![0; (olen + BIT_WIDTH - 1) / BIT_WIDTH],
+                olen,
+            }
+        }
+        pub fn count_ones(&self) -> u32 {
+            self.fields.iter().map(|x| x.count_ones()).sum::<_>()
+        }
+        pub fn cyclic_shift_right(&mut self, shift: usize) {
+            let shift = shift % self.olen;
+            if shift == 0 {
+                return;
+            }
+            let mut next_fields = vec![0; self.fields.len()];
+            for i in 0..self.fields.len() {
+                next_fields[i] = self.fields[i] >> shift;
+                let mask = (1 << shift) - 1;
+                if (i < self.fields.len() - 1) || (self.olen % BIT_WIDTH == 0) {
+                    next_fields[i] |=
+                        (self.fields[(i + 1) % self.fields.len()] & mask) << (BIT_WIDTH - shift);
+                } else {
+                    next_fields[i] |= (self.fields[(i + 1) % self.fields.len()] & mask)
+                        << (self.olen % BIT_WIDTH - shift);
+                }
+            }
+            std::mem::swap(&mut self.fields, &mut next_fields);
+        }
+        pub fn cyclic_shift_left(&mut self, shift: usize) {
+            let shift = shift % self.olen;
+            if shift == 0 {
+                return;
+            }
+            let mut next_fields = vec![0; self.fields.len()];
+            for reduced_dst_idx in 0..self.fields.len() {
+                let org_dst_idx0 = BIT_WIDTH * reduced_dst_idx;
+                let org_dst_idx1 = if reduced_dst_idx != self.fields.len() - 1 {
+                    org_dst_idx0 + BIT_WIDTH - 1
+                } else {
+                    org_dst_idx0 + self.olen % BIT_WIDTH - 1
+                };
+                let org_src_idx0 = (org_dst_idx0 + self.olen - shift) % self.olen;
+                let org_src_idx1 = (org_dst_idx1 + self.olen - shift) % self.olen;
+                next_fields[reduced_dst_idx] =
+                    self.get_ranged_field_value(org_src_idx0, org_src_idx1);
+            }
+            std::mem::swap(&mut self.fields, &mut next_fields);
+        }
+        fn get_ranged_field_value(&self, org_src_idx0: usize, org_src_idx1: usize) -> u64 {
+            let mut ret = 0;
+            if org_src_idx0 / BIT_WIDTH == org_src_idx1 / BIT_WIDTH {
+                ret = (self.fields[org_src_idx0 / BIT_WIDTH]
+                    & (((1 << (org_src_idx1 % BIT_WIDTH)) - 1)
+                        - if org_src_idx0 == 0 {
+                            0
+                        } else {
+                            ((1 << ((org_src_idx0 - 1) % BIT_WIDTH)) - 1)
+                        }))
+                    >> (org_src_idx0 % BIT_WIDTH);
+            } else {
+                let elem_bit_width = if org_src_idx0 / BIT_WIDTH == self.fields.len() - 1 {
+                    self.olen % BIT_WIDTH
+                } else {
+                    BIT_WIDTH
+                };
+                // lower bits
+                ret |= (self.fields[org_src_idx0 / BIT_WIDTH]
+                    & (((1 << elem_bit_width) - 1) - ((1 << ((org_src_idx0 - 1 ) % BIT_WIDTH)) - 1)))
+                    >> (org_src_idx0 % BIT_WIDTH);
+                // higher bits
+                ret |= (self.fields[org_src_idx1 / BIT_WIDTH]
+                    & ((1 << (org_src_idx1 % BIT_WIDTH)) - 1))
+                    << (BIT_WIDTH - org_src_idx0 % BIT_WIDTH) % BIT_WIDTH;
+            }
+            ret
+        }
+        pub fn set(&mut self, index: usize, val: bool) {
+            if val {
+                self.fields[index / BIT_WIDTH] |= 1 << (index % BIT_WIDTH);
+            } else {
+                self.fields[index / BIT_WIDTH] &= !(1 << (index % BIT_WIDTH));
+            }
+        }
+        pub fn get(&self, index: usize) -> bool {
+            ((self.fields[index / BIT_WIDTH] >> (index % BIT_WIDTH)) & 1) != 0
+        }
+    }
+    impl std::ops::BitOr for BitField {
+        type Output = Self;
+        fn bitor(self, rhs: Self) -> Self::Output {
+            Self {
+                fields: self
+                    .fields
+                    .into_iter()
+                    .zip(rhs.fields.into_iter())
+                    .map(|(x, y)| x | y)
+                    .collect::<Vec<_>>(),
+                olen: self.olen,
+            }
+        }
+    }
+}
+use bitfield::BitField;
+
 fn main() {
-    
+    let n = 10;
+    for bit in 0..(1 << n) {
+        let mut field = BitField::new(n);
+        for i in (0..n).filter(|i| ((bit >> i) & 1) != 0) {
+            field.set(i, true);
+        }
+        for s in 0..n {
+            let mut nfield = field.clone();
+            nfield.cyclic_shift_left(s);
+            for i in (0..n) {
+                if ((bit >> i) & 1) != 0 {
+                    assert!(nfield.get(i));
+                } else {
+                    assert!(!nfield.get(i));
+                }
+            }
+        }
+    }
 }
