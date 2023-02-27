@@ -2846,7 +2846,7 @@ mod bitfield {
                 >> (org_src_idx0 % BIT_WIDTH);
             // higher bits
             ret |= (self.fields[org_src_idx1 / BIT_WIDTH]
-                & ((1 << (org_src_idx1 % BIT_WIDTH)) - 1))
+                & ((1 << ((org_src_idx1 + 1) % BIT_WIDTH)) - 1))
                 << (elem_bit_width - org_src_idx0 % BIT_WIDTH) % elem_bit_width;
             ret
         }
@@ -2886,12 +2886,6 @@ fn main() {
             field.set(i, true);
         }
         for s in 0..n {
-            debug!(n, s);
-            if bit == 1 && s == 9 {
-                //
-            } else {
-                continue;
-            }
             let mut nfield = field.clone();
             nfield.cyclic_shift_left(s);
             for i in (0..n) {
