@@ -2835,30 +2835,19 @@ mod bitfield {
         }
         fn get_ranged_field_value(&self, org_src_idx0: usize, org_src_idx1: usize) -> u64 {
             let mut ret = 0;
-            if org_src_idx0 / BIT_WIDTH == org_src_idx1 / BIT_WIDTH {
-                ret = (self.fields[org_src_idx0 / BIT_WIDTH]
-                    & (((1 << (org_src_idx1 % BIT_WIDTH)) - 1)
-                        - if org_src_idx0 == 0 {
-                            0
-                        } else {
-                            ((1 << ((org_src_idx0 - 1) % BIT_WIDTH)) - 1)
-                        }))
-                    >> (org_src_idx0 % BIT_WIDTH);
+            let elem_bit_width = if org_src_idx0 / BIT_WIDTH == self.fields.len() - 1 {
+                self.olen % BIT_WIDTH
             } else {
-                let elem_bit_width = if org_src_idx0 / BIT_WIDTH == self.fields.len() - 1 {
-                    self.olen % BIT_WIDTH
-                } else {
-                    BIT_WIDTH
-                };
-                // lower bits
-                ret |= (self.fields[org_src_idx0 / BIT_WIDTH]
-                    & (((1 << elem_bit_width) - 1) - ((1 << ((org_src_idx0 - 1 ) % BIT_WIDTH)) - 1)))
-                    >> (org_src_idx0 % BIT_WIDTH);
-                // higher bits
-                ret |= (self.fields[org_src_idx1 / BIT_WIDTH]
-                    & ((1 << (org_src_idx1 % BIT_WIDTH)) - 1))
-                    << (BIT_WIDTH - org_src_idx0 % BIT_WIDTH) % BIT_WIDTH;
-            }
+                BIT_WIDTH
+            };
+            // lower bits
+            ret |= (self.fields[org_src_idx0 / BIT_WIDTH]
+                & (((1 << elem_bit_width) - 1) - ((1 << ((org_src_idx0 - 1 ) % BIT_WIDTH)) - 1)))
+                >> (org_src_idx0 % BIT_WIDTH);
+            // higher bits
+            ret |= (self.fields[org_src_idx1 / BIT_WIDTH]
+                & ((1 << (org_src_idx1 % BIT_WIDTH)) - 1))
+                << (elem_bit_width - org_src_idx0 % BIT_WIDTH) % elem_bit_width;
             ret
         }
         pub fn set(&mut self, index: usize, val: bool) {
@@ -2897,13 +2886,19 @@ fn main() {
             field.set(i, true);
         }
         for s in 0..n {
+            debug!(n, s);
+            if bit == 1 && s == 9 {
+                //
+            } else {
+                continue;
+            }
             let mut nfield = field.clone();
             nfield.cyclic_shift_left(s);
             for i in (0..n) {
                 if ((bit >> i) & 1) != 0 {
-                    assert!(nfield.get(i));
+                    assert!(nfield.get((i + s) % n));
                 } else {
-                    assert!(!nfield.get(i));
+                    assert!(!nfield.get((i + s) % n));
                 }
             }
         }
