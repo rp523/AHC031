@@ -3464,5 +3464,135 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 
 fn main() {
-
+    let n = 3;
+    for scores in (0usize..n).into_permutations() {
+        for mut ious in 0..1u128 << ((n * (n - 1)) / 2) {
+            let mut g = vec![vec![false; n]; n];
+            {
+                // prepare
+                let mut scc = Scc::new(n);
+                for i in 0..n {
+                    for j in 0..i {
+                        let iou = ious % 2;
+                        ious >>= 1;
+                        if iou == 0 {
+                            continue;
+                        }
+                        let (hi, lo) = if scores[i] > scores[j] {
+                            (i, j)
+                        } else {
+                            (j, i)
+                        };
+                        g[hi][lo] = true;
+                        scc.add(hi, lo);
+                    }
+                }
+                if scc.decompose().len() < n {
+                    continue;
+                }
+                // normal
+                let normal = {
+                    let mut remain = vec![true; n];
+                    for ts in (0..n).rev() {
+                        for v in 0..n {
+                            if scores[v] != ts {
+                                continue;
+                            }
+                            if !remain[v] {
+                                continue;
+                            }
+                            for nv in 0.. n {
+                                if !g[v][nv] {
+                                    continue;
+                                }
+                                remain[nv] = false;
+                            }
+                            break;
+                        }
+                    }
+                    remain
+                };
+                // left-bullet
+                let left_bullet = {
+                    let mut remain = vec![true; n];
+                    let mut left = VecDeque::new();
+                    for r in 0..n {
+                        if left.is_empty() {
+                            left.push_back(r)
+                        } else {
+                            let l = left.pop_back().unwrap();
+                            if g[l][r] {
+                                debug_assert!(!g[r][l]);
+                                // delete r
+                                remain[r] = false;
+                                left.push_back(l);
+                            } else if g[r][l] {
+                                debug_assert!(!g[l][r]);
+                                // delete l
+                                remain[l] = false;
+                                left.push_back(r);
+                            } else {
+                                // no deletion
+                                left.push_back(l);
+                                left.push_back(r);
+                            }
+                        }
+                    }
+                    remain
+                };
+                // right-bullet
+                let right_bullet = {
+                    let mut remain = vec![true; n];
+                    let mut right = VecDeque::new();
+                    for l in (0..n).rev() {
+                        if right.is_empty() {
+                            right.push_back(l)
+                        } else {
+                            let r = right.pop_back().unwrap();
+                            if g[l][r] {
+                                debug_assert!(!g[r][l]);
+                                // delete r
+                                remain[r] = false;
+                                right.push_back(l);
+                            } else if g[r][l] {
+                                debug_assert!(!g[l][r]);
+                                // delete l
+                                remain[l] = false;
+                                right.push_back(r);
+                            } else {
+                                // no deletion
+                                right.push_back(l);
+                                right.push_back(r);
+                            }
+                        }
+                    }
+                    remain
+                };
+                let mut ok = true;
+                for i in 0..n {
+                    if !normal[i] {
+                        continue;
+                    }
+                    if !left_bullet[i] && !right_bullet[i] {
+                        ok = false;
+                    }
+                }
+                if !ok {
+                    println!("{:?}", scores);
+                    println!("{:?}", normal);
+                    println!("{:?}", left_bullet);
+                    println!("{:?}", right_bullet);
+                    for i in 0..n {
+                        for j in 0..n {
+                            if !g[i][j] {
+                                continue;
+                            }
+                            println!("{} {}", i, j);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+    }
 }
