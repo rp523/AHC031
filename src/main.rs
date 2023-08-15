@@ -3467,8 +3467,7 @@ use std::time::Instant;
 use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaChaRng;
 const TEMP_MAX: usize = 1000;
-const SET_SIG_RATE: f64 = 3.0;
-const GET_SIG_RATE: f64 = 1e-0;
+const SET_SIG_RATE: f64 = 1.0;
 const D: usize = 1;
 struct Solver {
     t0: Instant,
@@ -3495,70 +3494,79 @@ impl Solver {
         let rng = ChaChaRng::from_seed(seed);
 
         let div_unit = (2.0 * SET_SIG_RATE * s) as usize;
-        let base = TEMP_MAX / div_unit;
+        let base = max(2, TEMP_MAX / div_unit);
         let mut width = 1usize;
         while base.pow(width as u32) < n {
             width += 1;
         }
-        let nxt0 = D % l;
-        let nxt1 = (l - D) % l;
+        eprintln!("base: {}, width: {}", base, width);
+        let p = D % l;
+        let m = (l - D) % l;
         let deltas = vec![
             (0, 0),
-            (nxt0, 0),
-            (0, nxt0),
-            (nxt1, 0),
-            (0, nxt1),
-            (nxt0, nxt0),
-            (nxt0, nxt1),
-            (nxt1, 0),
-            (nxt1, nxt1),
+            (p, 0),
+            (0, p),
+            (m, 0),
+            (0, m),
+            (p, p),
+            (p, m),
+            (m, p),
+            (m, m),
         ];
+        if cfg!(debug_assertions) {
+            let mut delta_st = BTreeSet::new();
+            for e in deltas.iter().copied() {
+                delta_st.insert(e);
+            }
+            debug_assert!(delta_st.len() == deltas.len());
+        }
         let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
         Self { t0, l, n, s, gates, rand, rng, base, width, deltas, value_order }
     }
     fn gen_vals_trial(&mut self) -> Option<Vec<usize>> {
-        let mut remains = vec![true; self.base.pow(self.width as u32)];
+        let mut val_remains = vec![true; self.base.pow(self.width as u32)];
         self.value_order.shuffle(&mut self.rng);
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
         for (gi, (y0, x0)) in self.gates.iter().copied().enumerate() {
             let mut valset = false;
-            for val0 in (0..remains.len()).map(|i| self.value_order[i]).filter(|&value| remains[value]) {
-                let mut val_ok = true;
-                let mut val = val0;
+            for gate_val0 in (0..val_remains.len()).map(|i| self.value_order[i]).filter(|&value| val_remains[value]) {
+                let mut digit_ok = true;
+                let mut gate_val = gate_val0;
                 for (dy, dx) in self.deltas.iter().copied().take(self.width) {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
-                    let v = val % self.base;
-                    val /= self.base;
+                    let digit = gate_val % self.base;
+                    gate_val /= self.base;
                     if let Some(org) = field[y][x] {
-                        if org != v {
-                            val_ok = false;
+                        if org != digit {
+                            digit_ok = false;
                             break;
                         }
                     }
                 }
-                if !val_ok {
+                if !digit_ok {
                     continue;
                 }
                 // found valid value!
-                let mut val = val0;
+                let mut gate_val = gate_val0;
                 for (dy, dx) in self.deltas.iter().copied().take(self.width) {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
-                    let v = val % self.base;
-                    val /= self.base;
+                    let digit = gate_val % self.base;
+                    gate_val /= self.base;
                     if field[y][x].is_some() {
-                        debug_assert!(field[y][x].unwrap() == v);
+                        debug_assert!(field[y][x].unwrap() == digit);
                         continue;
                     }
-                    field[y][x] = Some(v);
+                    field[y][x] = Some(digit);
                 }
-                remains[val0] = false;
-                values[gi] = val0;
+                val_remains[gate_val0] = false;
+                values[gi] = gate_val0;
                 valset = true;
                 break;
             }
+
             if !valset {
                 return None;
             }
@@ -3566,14 +3574,10 @@ impl Solver {
         Some(values)
     }
     fn gen_vals(&mut self) -> Vec<usize> {
-        let mut values = vec![];
+        let values;// = vec![];
         loop {
             if let Some(valid_values) = self.gen_vals_trial() {
                 values = valid_values;
-            }
-            if values.is_empty() {
-                continue;
-            } else {
                 break;
             }
         }
@@ -3584,24 +3588,54 @@ impl Solver {
                 debug_assert!(v < self.base.pow(self.width as u32));
             }
             debug_assert!(st.len() == values.len());
+            let mut field = vec![vec![None; self.l]; self.l];
+            for (gi, gvalue) in values.iter().copied().enumerate() {
+                let (gy, gx) = self.gates[gi];
+                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate().take(self.width) {
+                    let y = (gy + dy) % self.l;
+                    let x = (gx + dx) % self.l;
+                    let mut digit = gvalue;
+                    for _ in 0..di {
+                        digit /= self.base;
+                    }
+                    digit %= self.base;
+                    if let Some(org) = field[y][x] {
+                        debug_assert!(org == digit);
+                    } else {
+                        field[y][x] = Some(digit);
+                    }
+                }
+            }
         }
         values
     }
-    fn gen_temp_map(&self, order: &[usize]) -> Vec<Vec<usize>> {
-        let mut delta = TEMP_MAX as f64 / ((self.n - 1) as f64);
-        delta.chmin(SET_SIG_RATE * self.s);
-        let delta = delta;
+    fn calc_set_temp(&self, level: usize) -> usize {
+        debug_assert!(level < self.base);
+        let unit = TEMP_MAX as f64 / (self.base - 1) as f64;
+        min((unit * level as f64) as usize, TEMP_MAX)
+    }
+    fn gen_temp_map(&self, values: &[usize]) -> Vec<Vec<usize>> {
         let mut temp = vec![vec![0; self.l]; self.l];
         let mut done = vec![vec![false; self.l]; self.l];
         let mut temp_sum = 0;
         let mut temp_norm = 0;
-        for (i, &(y, x)) in self.gates.iter().enumerate() {
-            let oi = order[i];
-            let temp_val = min((delta * oi as f64) as usize, TEMP_MAX);
-            temp[y][x] = temp_val;
-            done[y][x] = true;
-            temp_sum += temp_val;
-            temp_norm += 1;
+        for ((y0, x0), val0) in self.gates.iter().zip(values.iter().copied()) {
+            let mut val = val0;
+            for (dy, dx) in self.deltas.iter().copied().take(self.width) {
+                let y = (y0 + dy) % self.l;
+                let x = (x0 + dx) % self.l;
+                let level = val % self.base;
+                val /= self.base;
+                let temp_val = self.calc_set_temp(level);
+                if done[y][x] {
+                    debug_assert!(temp[y][x] == temp_val);
+                    continue;
+                }
+                temp[y][x] = temp_val;
+                done[y][x] = true;
+                temp_sum += temp_val;
+                temp_norm += 1;
+            }
         }
         let temp_mean = temp_sum / temp_norm;
         for y in 0..self.l {
@@ -3666,85 +3700,74 @@ impl Solver {
             println!();
         }
     }
-    fn ask(i: usize) -> f64 {
-        println!("{} 0 0", i);
-        read::<f64>()
+    fn ask(i: usize, dy: usize, dx: usize) -> usize {
+        println!("{} {} {}", i, dy, dx);
+        read::<usize>()
     }
-    fn rise_order(&self) -> Vec<usize> {
-        let mut sum = vec![0.0; self.n];
-        let mut sumsq = vec![0.0; self.n];
-        let mut norm = vec![1.0; self.n];
+    fn measure(&self, set_values: &[usize]) -> Vec<usize> {
+        let mut sum = vec![vec![0usize; self.width]; self.n];
+        let mut norm = vec![vec![0usize; self.width]; self.n];
         let mut ask_cnt = 0usize;
-        for _ in 0..10 {
-            for i in 0..self.n {
-                let m = Self::ask(i);
-                sum[i] += m;
-                sumsq[i] += m * m;
-                norm[i] += 1.0;
-                ask_cnt += 1;
+        let mut tgt_st = BTreeSet::new();
+        for val in set_values.iter().copied() {
+            tgt_st.insert(val);
+        }
+        debug_assert!(set_values.len() == tgt_st.len());
+        let mut get_value = vec![0; self.n];
+        loop {
+            'scan: for gi in 0..self.n {
+                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate().take(self.width) {
+                    let m = Self::ask(gi, dy, dx);
+                    sum[gi][di] += m;
+                    norm[gi][di] += 1;
+                    ask_cnt += 1;
+                    if ask_cnt >= 10000 {
+                        break 'scan;
+                    }
+                }
+            }
+
+            get_value.iter_mut().for_each(|v| *v = 0);
+            for gi in 0..self.n {
+                for di in 0..self.width {
+                    debug_assert!(norm[gi][di] > 0);
+                    let meas_mean = sum[gi][di] as f64 / norm[gi][di] as f64;
+                    let mut delta_max = None;
+                    let mut level = 0;
+                    for li in 0..self.base {
+                        let infer_value = self.calc_set_temp(li) as f64;
+                        let infer_delta = (infer_value - meas_mean).abs();
+                        if delta_max.chmin(infer_delta) {
+                            level = li;
+                        }
+                    }
+                    get_value[gi] += self.base.pow(di as u32) * level;
+                }
+            }
+
+            let mut get_st = BTreeSet::new();
+            for val in get_value.iter().copied() {
+                get_st.insert(val);
+            }
+            if get_st == tgt_st {
+                eprintln!("FULL MATCH!");
+                break;
+            }
+            if ask_cnt >= 10000 {
+                break;
             }
         }
-        let mut gate = (0..self.n).collect::<Vec<_>>();
-        gate.sort_by(|&i, &j| (sum[i] as f64 / norm[i] as f64).partial_cmp(&(sum[j] as f64 / norm[j] as f64)).unwrap());
-        let mut lrem = 0;
-        let mut no_ask_cnt = 0;
-        while ask_cnt < 10000 && no_ask_cnt < self.n - 1{
-            let idx0 = gate[lrem];
-            let idx1 = gate[lrem + 1];
-            let mean0 = sum[idx0] / norm[idx0];
-            let mean1 = sum[idx1] / norm[idx1];
-            let mut var0 = sumsq[idx0] / norm[idx0] - mean0 * mean0;
-            var0.chmax(0.0);
-            let sig0 = var0.sqrt();
-            let mut var1 = sumsq[idx1] / norm[idx1] - mean1 * mean1;
-            var1.chmax(0.0);
-            let sig1 = var1.sqrt();
-            if mean1 - GET_SIG_RATE * sig1 > mean0 + GET_SIG_RATE * sig0 {
-                no_ask_cnt += 1;
-            } else {
-                let idxa = if norm[idx0] < norm[idx1] {
-                    idx0
-                } else if norm[idx0] > norm[idx1] {
-                    idx1
-                } else if sig0 > sig1 {
-                    idx0
-                } else {
-                    idx1
-                };
-                let m = Self::ask(idxa);
-                sum[idxa] += m;
-                sumsq[idxa] += m * m;
-                norm[idxa] += 1.0;
-                ask_cnt += 1;
-                no_ask_cnt = 0;
-            }
-            lrem += 1;
-            if lrem >= self.n - 1 {
-                lrem = 0;
-                gate.sort_by(|&i, &j| (sum[i] as f64 / norm[i] as f64).partial_cmp(&(sum[j] as f64 / norm[j] as f64)).unwrap());
-            }
-        }
-        for i in 0..self.n {
-            let idx0 = gate[i];
-            let mean0 = sum[idx0] / norm[idx0];
-            let mut var0 = sumsq[idx0] / norm[idx0] - mean0 * mean0;
-            var0.chmax(0.0);
-            let sig0 = var0.sqrt();
-            println!("# {} {} {}", i, mean0, sig0);
-        }
-        gate
+        get_value
     }
-    fn answer(&self, temp: Vec<Vec<usize>>, rise_order: Vec<usize>) {
-        let mut temp_i = (0..self.n).map(|i| {
-            let (y, x) = self.gates[i];
-            let temp_val = temp[y][x];
-            (temp_val, i)
-        }).collect::<Vec<_>>();
-        temp_i.sort();
+    fn answer(&self, set_values: Vec<usize>, get_values: Vec<usize>) {
+        let mut set_i = set_values.into_iter().enumerate().collect::<Vec<_>>();
+        set_i.sort_by_cached_key(|&x| x.1);
+        let mut get_i = get_values.into_iter().enumerate().collect::<Vec<_>>();
+        get_i.sort_by_cached_key(|&x| x.1);
         let mut ans = vec![None; self.n];
-        for (from, (_, to)) in rise_order.into_iter().zip(temp_i.into_iter()) {
-            debug_assert!(ans[from].is_none());
-            ans[from] = Some(to);
+        for ((set_i, _), (get_i, _)) in set_i.into_iter().zip(get_i.into_iter()) {
+            debug_assert!(ans[get_i].is_none());
+            ans[get_i] = Some(set_i);
         }
         println!("-1 -1 -1");
         for ans in ans.into_iter().flatten() {
@@ -3752,36 +3775,28 @@ impl Solver {
         }
     }
     fn solve(&mut self) {
-        let mut values = self.gen_vals();
-        eprintln!("{:?}", values);
-        eprintln!("{}", self.t0.elapsed().as_millis());
-        /*
+        let mut best_values = self.gen_vals();
         // gen temperature map
-        let mut temp = self.gen_temp_map(&set_rise_order);
-        let mut best_temp_cost = self.calc_temp_cost(&temp);
-        let mut temp_try_cnt = 0usize;
-        let mut temp_update_cnt = 0usize;
+        let mut best_temp = self.gen_temp_map(&best_values);
+        let mut best_temp_cost = self.calc_temp_cost(&best_temp);
+        let mut try_cnt = 0usize;
+        let mut update_cnt = 0usize;
         while self.t0.elapsed().as_millis() < 3_000 {
-            temp_try_cnt += 1;
-            let i0 = self.rand.next_usize() % self.n;
-            let i1 = (i0 + 1 + self.rand.next_usize() % (self.n - 1)) % self.n;
-            debug_assert!(i0 != i1);
-            set_rise_order.swap(i0, i1);
-            let next_temp = self.gen_temp_map(&set_rise_order);
-            let next_temp_cost = self.calc_temp_cost(&next_temp);
-            if best_temp_cost.chmin(next_temp_cost) {
-                temp_update_cnt += 1;
-                temp = next_temp;
-            } else {
-                set_rise_order.swap(i0, i1);
+            try_cnt += 1;
+            let values = self.gen_vals();
+            let temp = self.gen_temp_map(&values);
+            let temp_cost = self.calc_temp_cost(&temp);
+            if best_temp_cost.chmin(temp_cost) {
+                update_cnt += 1;
+                best_values = values;
+                best_temp = temp;
             }
         }
-        eprintln!("{}/{}", temp_update_cnt, temp_try_cnt);
-        Self::output_temp(&temp);
+        eprintln!("{}/{}", update_cnt, try_cnt);
+        Self::output_temp(&best_temp);
         // question until adjascent temp delta is smaller than sigma
-        let get_rise_order = self.rise_order();
-        self.answer(temp, get_rise_order);
-        */
+        let get_values = self.measure(&best_values);
+        self.answer(best_values, get_values);
     }
 }
 fn main() {
