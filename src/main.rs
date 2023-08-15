@@ -3469,6 +3469,7 @@ use rand_chacha::ChaChaRng;
 const TEMP_MAX: usize = 1000;
 const SET_SIG_RATE: f64 = 3.0;
 const GET_SIG_RATE: f64 = 1e-0;
+const D: usize = 1;
 struct Solver {
     t0: Instant,
     l: usize,
@@ -3477,6 +3478,10 @@ struct Solver {
     gates: Vec<(usize, usize)>,
     rand: XorShift64,
     rng: ChaChaRng,
+    base: usize,
+    width: usize,
+    deltas: Vec<(usize, usize)>,
+    value_order: Vec<usize>,
 }
 impl Solver {
     fn new() -> Self {
@@ -3488,28 +3493,104 @@ impl Solver {
         let rand = XorShift64::new();
         let seed = [0; 32];
         let rng = ChaChaRng::from_seed(seed);
-        Self { t0, l, n, s, gates, rand, rng}
+
+        let div_unit = (2.0 * SET_SIG_RATE * s) as usize;
+        let base = TEMP_MAX / div_unit;
+        let mut width = 1usize;
+        while base.pow(width as u32) < n {
+            width += 1;
+        }
+        let nxt0 = D % l;
+        let nxt1 = (l - D) % l;
+        let deltas = vec![
+            (0, 0),
+            (nxt0, 0),
+            (0, nxt0),
+            (nxt1, 0),
+            (0, nxt1),
+            (nxt0, nxt0),
+            (nxt0, nxt1),
+            (nxt1, 0),
+            (nxt1, nxt1),
+        ];
+        let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
+        Self { t0, l, n, s, gates, rand, rng, base, width, deltas, value_order }
     }
-    fn fix_order(&mut self) -> Vec<usize> {
-        //let mut ret = (0..self.n).map(|i| {(self.rand.next_usize(), i)}).collect::<Vec<_>>();
-        //ret.sort();
-        //return ret.into_iter().map(|(_, i)| i).collect::<Vec<_>>();
-        let mut yxi = (0..self.n).map(|i| {
-            let (y, x) = self.gates[i];
-            let yx = y + x;
-            if yx < self.l {
-                (yx, i)
+    fn gen_vals_trial(&mut self) -> Option<Vec<usize>> {
+        let mut remains = vec![true; self.base.pow(self.width as u32)];
+        self.value_order.shuffle(&mut self.rng);
+        let mut field = vec![vec![None; self.l]; self.l];
+        let mut values = vec![0; self.n];
+        for (gi, (y0, x0)) in self.gates.iter().copied().enumerate() {
+            let mut valset = false;
+            for val0 in (0..remains.len()).map(|i| self.value_order[i]).filter(|&value| remains[value]) {
+                let mut val_ok = true;
+                let mut val = val0;
+                for (dy, dx) in self.deltas.iter().copied().take(self.width) {
+                    let y = (y0 + dy) % self.l;
+                    let x = (x0 + dx) % self.l;
+                    let v = val % self.base;
+                    val /= self.base;
+                    if let Some(org) = field[y][x] {
+                        if org != v {
+                            val_ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !val_ok {
+                    continue;
+                }
+                // found valid value!
+                let mut val = val0;
+                for (dy, dx) in self.deltas.iter().copied().take(self.width) {
+                    let y = (y0 + dy) % self.l;
+                    let x = (x0 + dx) % self.l;
+                    let v = val % self.base;
+                    val /= self.base;
+                    if field[y][x].is_some() {
+                        debug_assert!(field[y][x].unwrap() == v);
+                        continue;
+                    }
+                    field[y][x] = Some(v);
+                }
+                remains[val0] = false;
+                values[gi] = val0;
+                valset = true;
+                break;
+            }
+            if !valset {
+                return None;
+            }
+        }
+        Some(values)
+    }
+    fn gen_vals(&mut self) -> Vec<usize> {
+        let mut values = vec![];
+        loop {
+            if let Some(valid_values) = self.gen_vals_trial() {
+                values = valid_values;
+            }
+            if values.is_empty() {
+                continue;
             } else {
-                (self.l - yx, i)
-        }}).collect::<Vec<_>>();
-        yxi.sort();
-        yxi.into_iter().map(|(_, i)| i).collect::<Vec<_>>()
+                break;
+            }
+        }
+        if cfg!(debug_assertions) {
+            let mut st = BTreeSet::new();
+            for v in values.iter().copied() {
+                st.insert(v);
+                debug_assert!(v < self.base.pow(self.width as u32));
+            }
+            debug_assert!(st.len() == values.len());
+        }
+        values
     }
     fn gen_temp_map(&self, order: &[usize]) -> Vec<Vec<usize>> {
         let mut delta = TEMP_MAX as f64 / ((self.n - 1) as f64);
         delta.chmin(SET_SIG_RATE * self.s);
         let delta = delta;
- 
         let mut temp = vec![vec![0; self.l]; self.l];
         let mut done = vec![vec![false; self.l]; self.l];
         let mut temp_sum = 0;
@@ -3671,8 +3752,10 @@ impl Solver {
         }
     }
     fn solve(&mut self) {
-        // fix gate order
-        let mut set_rise_order = self.fix_order();
+        let mut values = self.gen_vals();
+        eprintln!("{:?}", values);
+        eprintln!("{}", self.t0.elapsed().as_millis());
+        /*
         // gen temperature map
         let mut temp = self.gen_temp_map(&set_rise_order);
         let mut best_temp_cost = self.calc_temp_cost(&temp);
@@ -3698,6 +3781,7 @@ impl Solver {
         // question until adjascent temp delta is smaller than sigma
         let get_rise_order = self.rise_order();
         self.answer(temp, get_rise_order);
+        */
     }
 }
 fn main() {
