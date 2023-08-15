@@ -3469,6 +3469,7 @@ use rand_chacha::ChaChaRng;
 const TEMP_MAX: usize = 1000;
 const SET_SIG_RATE: f64 = 1.0;
 const D: usize = 1;
+const TIME_LIMIT:u128 = 3_000;
 struct Solver {
     t0: Instant,
     l: usize,
@@ -3523,7 +3524,7 @@ impl Solver {
         let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
         Self { t0, l, n, s, gates, rand, rng, base, width, deltas, value_order }
     }
-    fn gen_vals_trial(&mut self) -> Option<Vec<usize>> {
+    fn gen_vals(&mut self) -> Option<Vec<usize>> {
         let mut val_remains = vec![true; self.base.pow(self.width as u32)];
         self.value_order.shuffle(&mut self.rng);
         let mut field = vec![vec![None; self.l]; self.l];
@@ -3571,16 +3572,6 @@ impl Solver {
                 return None;
             }
         }
-        Some(values)
-    }
-    fn gen_vals(&mut self) -> Vec<usize> {
-        let values;// = vec![];
-        loop {
-            if let Some(valid_values) = self.gen_vals_trial() {
-                values = valid_values;
-                break;
-            }
-        }
         if cfg!(debug_assertions) {
             let mut st = BTreeSet::new();
             for v in values.iter().copied() {
@@ -3607,7 +3598,16 @@ impl Solver {
                 }
             }
         }
-        values
+        Some(values)
+    }
+    fn gen_vals_ini(&mut self) -> Vec<usize> {
+        let lmax = self.base.pow(self.width as u32);
+        let mut ret = vec![];
+        for _ in 0..self.n {
+            let l = self.rand.next_usize() % lmax;
+            ret.push(l);
+        }
+        ret
     }
     fn calc_set_temp(&self, level: usize) -> usize {
         debug_assert!(level < self.base);
@@ -3775,21 +3775,22 @@ impl Solver {
         }
     }
     fn solve(&mut self) {
-        let mut best_values = self.gen_vals();
+        let mut best_values = self.gen_vals_ini();
         // gen temperature map
         let mut best_temp = self.gen_temp_map(&best_values);
         let mut best_temp_cost = self.calc_temp_cost(&best_temp);
         let mut try_cnt = 0usize;
         let mut update_cnt = 0usize;
-        while self.t0.elapsed().as_millis() < 3_000 {
+        while self.t0.elapsed().as_millis() < TIME_LIMIT {
             try_cnt += 1;
-            let values = self.gen_vals();
-            let temp = self.gen_temp_map(&values);
-            let temp_cost = self.calc_temp_cost(&temp);
-            if best_temp_cost.chmin(temp_cost) {
-                update_cnt += 1;
-                best_values = values;
-                best_temp = temp;
+            if let Some(values) = self.gen_vals() {
+                let temp = self.gen_temp_map(&values);
+                let temp_cost = self.calc_temp_cost(&temp);
+                if best_temp_cost.chmin(temp_cost) {
+                    update_cnt += 1;
+                    best_values = values;
+                    best_temp = temp;
+                }
             }
         }
         eprintln!("{}/{}", update_cnt, try_cnt);
