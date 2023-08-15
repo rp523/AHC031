@@ -3463,6 +3463,244 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 
+use std::time::Instant;
+use rand::{seq::SliceRandom, SeedableRng};
+use rand_chacha::ChaChaRng;
+const TEMP_MAX: usize = 1000;
+const SET_SIG_RATE: f64 = 3.0;
+const GET_SIG_RATE: f64 = 1e-0;
+struct Solver {
+    t0: Instant,
+    l: usize,
+    n: usize,
+    s: f64,
+    gates: Vec<(usize, usize)>,
+    rand: XorShift64,
+    rng: ChaChaRng,
+}
+impl Solver {
+    fn new() -> Self {
+        let t0 = Instant::now();
+        let l = read::<usize>();
+        let n = read::<usize>();
+        let s = read::<f64>();
+        let gates = (0..n).map(|_| (read::<usize>(), read::<usize>())).collect::<Vec<_>>();
+        let rand = XorShift64::new();
+        let seed = [0; 32];
+        let rng = ChaChaRng::from_seed(seed);
+        Self { t0, l, n, s, gates, rand, rng}
+    }
+    fn fix_order(&mut self) -> Vec<usize> {
+        //let mut ret = (0..self.n).map(|i| {(self.rand.next_usize(), i)}).collect::<Vec<_>>();
+        //ret.sort();
+        //return ret.into_iter().map(|(_, i)| i).collect::<Vec<_>>();
+        let mut yxi = (0..self.n).map(|i| {
+            let (y, x) = self.gates[i];
+            let yx = y + x;
+            if yx < self.l {
+                (yx, i)
+            } else {
+                (self.l - yx, i)
+        }}).collect::<Vec<_>>();
+        yxi.sort();
+        yxi.into_iter().map(|(_, i)| i).collect::<Vec<_>>()
+    }
+    fn gen_temp_map(&self, order: &[usize]) -> Vec<Vec<usize>> {
+        let mut delta = TEMP_MAX as f64 / ((self.n - 1) as f64);
+        delta.chmin(SET_SIG_RATE * self.s);
+        let delta = delta;
+ 
+        let mut temp = vec![vec![0; self.l]; self.l];
+        let mut done = vec![vec![false; self.l]; self.l];
+        let mut temp_sum = 0;
+        let mut temp_norm = 0;
+        for (i, &(y, x)) in self.gates.iter().enumerate() {
+            let oi = order[i];
+            let temp_val = min((delta * oi as f64) as usize, TEMP_MAX);
+            temp[y][x] = temp_val;
+            done[y][x] = true;
+            temp_sum += temp_val;
+            temp_norm += 1;
+        }
+        let temp_mean = temp_sum / temp_norm;
+        for y in 0..self.l {
+            for x in 0..self.l {
+                if done[y][x] {
+                    continue;
+                }
+                temp[y][x] = temp_mean;
+            }
+        }
+        // smoothing
+        let mut pre = vec![vec![0; self.l]; self.l];
+        let r = (self.l / 5) as i64;
+        for _ in 0..3 {
+            swap(&mut pre, &mut temp);
+            for y in 0..self.l {
+                for x in 0..self.l {
+                    if done[y][x] {
+                        temp[y][x] = pre[y][x];
+                        continue;
+                    }
+                    let mut sm = 0;
+                    let mut nm = 0;
+                    for dy in -r..=r {
+                        for dx in -r..=r {
+                            let ny = ((self.l as i64 + y as i64 + dy) % self.l as i64) as usize;
+                            let nx = ((self.l as i64 + x as i64 + dx) % self.l as i64) as usize;
+                            let w = if done[ny][nx] {
+                                ((r / 5) * r) as usize
+                            } else {
+                                1
+                            };
+                            sm += pre[ny][nx] * w;
+                            nm += w;
+                        }
+                    }
+                    temp[y][x] = sm / nm;
+                }
+            }
+        }
+        temp
+    }
+    fn calc_temp_cost(&self, temp: &[Vec<usize>]) -> i64 {
+        let mut cost = 0;
+        for y in 0..self.l {
+            for x in 0..self.l {
+                for &(dy, dx) in [(0, 1), (1, 0)].iter() {
+                    let ny = (y + dy) % self.l;
+                    let nx = (x + dx) % self.l;
+                    let dt = temp[ny][nx] as i64 - temp[y][x] as i64;
+                    cost += dt * dt;
+                }
+            }
+        }
+        cost
+    }
+    fn output_temp(temp: &[Vec<usize>]) {
+        for temp_row in temp.iter() {
+            for temp_val in temp_row.iter() {
+                print!("{} ", temp_val);
+            }
+            println!();
+        }
+    }
+    fn ask(i: usize) -> f64 {
+        println!("{} 0 0", i);
+        read::<f64>()
+    }
+    fn rise_order(&self) -> Vec<usize> {
+        let mut sum = vec![0.0; self.n];
+        let mut sumsq = vec![0.0; self.n];
+        let mut norm = vec![1.0; self.n];
+        let mut ask_cnt = 0usize;
+        for _ in 0..10 {
+            for i in 0..self.n {
+                let m = Self::ask(i);
+                sum[i] += m;
+                sumsq[i] += m * m;
+                norm[i] += 1.0;
+                ask_cnt += 1;
+            }
+        }
+        let mut gate = (0..self.n).collect::<Vec<_>>();
+        gate.sort_by(|&i, &j| (sum[i] as f64 / norm[i] as f64).partial_cmp(&(sum[j] as f64 / norm[j] as f64)).unwrap());
+        let mut lrem = 0;
+        let mut no_ask_cnt = 0;
+        while ask_cnt < 10000 && no_ask_cnt < self.n - 1{
+            let idx0 = gate[lrem];
+            let idx1 = gate[lrem + 1];
+            let mean0 = sum[idx0] / norm[idx0];
+            let mean1 = sum[idx1] / norm[idx1];
+            let mut var0 = sumsq[idx0] / norm[idx0] - mean0 * mean0;
+            var0.chmax(0.0);
+            let sig0 = var0.sqrt();
+            let mut var1 = sumsq[idx1] / norm[idx1] - mean1 * mean1;
+            var1.chmax(0.0);
+            let sig1 = var1.sqrt();
+            if mean1 - GET_SIG_RATE * sig1 > mean0 + GET_SIG_RATE * sig0 {
+                no_ask_cnt += 1;
+            } else {
+                let idxa = if norm[idx0] < norm[idx1] {
+                    idx0
+                } else if norm[idx0] > norm[idx1] {
+                    idx1
+                } else if sig0 > sig1 {
+                    idx0
+                } else {
+                    idx1
+                };
+                let m = Self::ask(idxa);
+                sum[idxa] += m;
+                sumsq[idxa] += m * m;
+                norm[idxa] += 1.0;
+                ask_cnt += 1;
+                no_ask_cnt = 0;
+            }
+            lrem += 1;
+            if lrem >= self.n - 1 {
+                lrem = 0;
+                gate.sort_by(|&i, &j| (sum[i] as f64 / norm[i] as f64).partial_cmp(&(sum[j] as f64 / norm[j] as f64)).unwrap());
+            }
+        }
+        for i in 0..self.n {
+            let idx0 = gate[i];
+            let mean0 = sum[idx0] / norm[idx0];
+            let mut var0 = sumsq[idx0] / norm[idx0] - mean0 * mean0;
+            var0.chmax(0.0);
+            let sig0 = var0.sqrt();
+            println!("# {} {} {}", i, mean0, sig0);
+        }
+        gate
+    }
+    fn answer(&self, temp: Vec<Vec<usize>>, rise_order: Vec<usize>) {
+        let mut temp_i = (0..self.n).map(|i| {
+            let (y, x) = self.gates[i];
+            let temp_val = temp[y][x];
+            (temp_val, i)
+        }).collect::<Vec<_>>();
+        temp_i.sort();
+        let mut ans = vec![None; self.n];
+        for (from, (_, to)) in rise_order.into_iter().zip(temp_i.into_iter()) {
+            debug_assert!(ans[from].is_none());
+            ans[from] = Some(to);
+        }
+        println!("-1 -1 -1");
+        for ans in ans.into_iter().flatten() {
+            println!("{}", ans);
+        }
+    }
+    fn solve(&mut self) {
+        // fix gate order
+        let mut set_rise_order = self.fix_order();
+        // gen temperature map
+        let mut temp = self.gen_temp_map(&set_rise_order);
+        let mut best_temp_cost = self.calc_temp_cost(&temp);
+        let mut temp_try_cnt = 0usize;
+        let mut temp_update_cnt = 0usize;
+        while self.t0.elapsed().as_millis() < 3_000 {
+            temp_try_cnt += 1;
+            let i0 = self.rand.next_usize() % self.n;
+            let i1 = (i0 + 1 + self.rand.next_usize() % (self.n - 1)) % self.n;
+            debug_assert!(i0 != i1);
+            set_rise_order.swap(i0, i1);
+            let next_temp = self.gen_temp_map(&set_rise_order);
+            let next_temp_cost = self.calc_temp_cost(&next_temp);
+            if best_temp_cost.chmin(next_temp_cost) {
+                temp_update_cnt += 1;
+                temp = next_temp;
+            } else {
+                set_rise_order.swap(i0, i1);
+            }
+        }
+        eprintln!("{}/{}", temp_update_cnt, temp_try_cnt);
+        Self::output_temp(&temp);
+        // question until adjascent temp delta is smaller than sigma
+        let get_rise_order = self.rise_order();
+        self.answer(temp, get_rise_order);
+    }
+}
 fn main() {
-
+    let mut solver = Solver::new();
+    solver.solve();
 }
