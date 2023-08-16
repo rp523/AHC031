@@ -3521,7 +3521,6 @@ impl Solver {
     }
     fn gen_vals(&mut self) -> Option<Vec<usize>> {
         let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
-        self.value_order.shuffle(&mut self.rng);
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
         for (gi, (y0, x0)) in self.gates.iter().copied().enumerate() {
@@ -3799,8 +3798,18 @@ impl Solver {
         let mut try_cnt = 0usize;
         let mut update_cnt = 0usize;
         let mut invalid_cnt = 0usize;
+        let mut trans = false;
         while self.t0.elapsed().as_millis() < TIME_LIMIT {
             try_cnt += 1;
+            let vl = self.value_order.len();
+            let i0 = self.rand.next_usize() % vl;
+            let i1 = (i0 + 1 + self.rand.next_usize() % (vl - 1)) % vl;
+            assert!(i0 != i1);
+            if !trans {
+                self.value_order.shuffle(&mut self.rng);
+            } else {
+                self.value_order.swap(i0, i1);
+            }
             if let Some(values) = self.gen_vals() {
                 let temp = self.gen_temp_map(&values);
                 let temp_cost = self.calc_temp_cost(&temp);
@@ -3808,8 +3817,16 @@ impl Solver {
                     update_cnt += 1;
                     best_values = values;
                     best_temp = temp;
+                    trans = true;
+                } else {
+                    if trans {
+                        self.value_order.swap(i0, i1);
+                    }
                 }
             } else {
+                if trans {
+                    self.value_order.swap(i0, i1);
+                }
                 invalid_cnt += 1;
             }
             if update_cnt == 0 && self.t0.elapsed().as_millis() > 1000 && invalid_cnt >= 1000 {
