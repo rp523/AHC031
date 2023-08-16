@@ -3468,7 +3468,7 @@ use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaChaRng;
 const TEMP_MAX: usize = 1000;
 const SET_SIG_RATE: f64 = 1.0;
-const D: usize = 1;
+const D: usize = 2;
 const TIME_LIMIT:u128 = 3_000;
 struct Solver {
     t0: Instant,
@@ -3479,8 +3479,7 @@ struct Solver {
     rand: XorShift64,
     rng: ChaChaRng,
     base: usize,
-    width: usize,
-    deltas: Vec<(usize, usize)>,
+    deltas: BTreeSet<(usize, usize)>,
     value_order: Vec<usize>,
 }
 impl Solver {
@@ -3503,7 +3502,8 @@ impl Solver {
         eprintln!("base: {}, width: {}", base, width);
         let p = D % l;
         let m = (l - D) % l;
-        let deltas = vec![
+        let mut deltas = BTreeSet::new();
+        for &delta in vec![
             (0, 0),
             (p, 0),
             (0, p),
@@ -3513,19 +3513,14 @@ impl Solver {
             (p, m),
             (m, p),
             (m, m),
-        ];
-        if cfg!(debug_assertions) {
-            let mut delta_st = BTreeSet::new();
-            for e in deltas.iter().copied() {
-                delta_st.insert(e);
-            }
-            debug_assert!(delta_st.len() == deltas.len());
+        ].iter().take(width) {
+            deltas.insert(delta);
         }
         let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
-        Self { t0, l, n, s, gates, rand, rng, base, width, deltas, value_order }
+        Self { t0, l, n, s, gates, rand, rng, base, deltas, value_order }
     }
     fn gen_vals(&mut self) -> Option<Vec<usize>> {
-        let mut val_remains = vec![true; self.base.pow(self.width as u32)];
+        let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
         self.value_order.shuffle(&mut self.rng);
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
@@ -3534,7 +3529,7 @@ impl Solver {
             for gate_val0 in (0..val_remains.len()).map(|i| self.value_order[i]).filter(|&value| val_remains[value]) {
                 let mut digit_ok = true;
                 let mut gate_val = gate_val0;
-                for (dy, dx) in self.deltas.iter().copied().take(self.width) {
+                for (dy, dx) in self.deltas.iter().copied().take(self.deltas.len()) {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
                     let digit = gate_val % self.base;
@@ -3551,7 +3546,7 @@ impl Solver {
                 }
                 // found valid value!
                 let mut gate_val = gate_val0;
-                for (dy, dx) in self.deltas.iter().copied().take(self.width) {
+                for (dy, dx) in self.deltas.iter().copied() {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
                     let digit = gate_val % self.base;
@@ -3576,13 +3571,13 @@ impl Solver {
             let mut st = BTreeSet::new();
             for v in values.iter().copied() {
                 st.insert(v);
-                debug_assert!(v < self.base.pow(self.width as u32));
+                debug_assert!(v < self.base.pow(self.deltas.len() as u32));
             }
             debug_assert!(st.len() == values.len());
             let mut field = vec![vec![None; self.l]; self.l];
             for (gi, gvalue) in values.iter().copied().enumerate() {
                 let (gy, gx) = self.gates[gi];
-                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate().take(self.width) {
+                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
                     let y = (gy + dy) % self.l;
                     let x = (gx + dx) % self.l;
                     let mut digit = gvalue;
@@ -3601,7 +3596,7 @@ impl Solver {
         Some(values)
     }
     fn gen_vals_ini(&mut self) -> Vec<usize> {
-        let lmax = self.base.pow(self.width as u32);
+        let lmax = self.base.pow(self.deltas.len() as u32);
         let mut ret = vec![];
         for _ in 0..self.n {
             let l = self.rand.next_usize() % lmax;
@@ -3621,7 +3616,7 @@ impl Solver {
         let mut temp_norm = 0;
         for ((y0, x0), val0) in self.gates.iter().zip(values.iter().copied()) {
             let mut val = val0;
-            for (dy, dx) in self.deltas.iter().copied().take(self.width) {
+            for (dy, dx) in self.deltas.iter().copied() {
                 let y = (y0 + dy) % self.l;
                 let x = (x0 + dx) % self.l;
                 let level = val % self.base;
@@ -3647,32 +3642,38 @@ impl Solver {
             }
         }
         // smoothing
-        let mut pre = vec![vec![0; self.l]; self.l];
-        let r = (self.l / 5) as i64;
-        for _ in 0..3 {
-            swap(&mut pre, &mut temp);
+        let rate = 0.1;
+        for _ in 0..20 {
+            let mut grad = vec![vec![0; self.l]; self.l];
+            let mut grad_abs_sum = 0;
+            for y0 in 0..self.l {
+                for x0 in 0..self.l {
+                    for &(dy, dx) in [(0, 1), (1, 0)].iter() {
+                        let y1 = (y0 + dy) % self.l;
+                        let x1 = (x0 + dx) % self.l;
+                        let rise_grad0 = 2 * (temp[y0][x0] as i64 - temp[y1][x1] as i64);
+                        let rise_grad1 = - rise_grad0;
+                        if !done[y0][x0] {
+                            grad[y0][x0] += rise_grad0;
+                            grad_abs_sum += rise_grad0.abs();
+                        }
+                        if !done[y1][x1] {
+                            grad[y1][x1] += rise_grad1;
+                            grad_abs_sum += rise_grad1.abs();
+                        }
+                    }
+                }
+            }
+            if grad_abs_sum == 0 {
+                break;
+            }
             for y in 0..self.l {
                 for x in 0..self.l {
                     if done[y][x] {
-                        temp[y][x] = pre[y][x];
                         continue;
                     }
-                    let mut sm = 0;
-                    let mut nm = 0;
-                    for dy in -r..=r {
-                        for dx in -r..=r {
-                            let ny = ((self.l as i64 + y as i64 + dy) % self.l as i64) as usize;
-                            let nx = ((self.l as i64 + x as i64 + dx) % self.l as i64) as usize;
-                            let w = if done[ny][nx] {
-                                ((r / 5) * r) as usize
-                            } else {
-                                1
-                            };
-                            sm += pre[ny][nx] * w;
-                            nm += w;
-                        }
-                    }
-                    temp[y][x] = sm / nm;
+                    let t = (temp[y][x] as f64 - rate * grad[y][x] as f64) as i64;
+                    temp[y][x] = max(0, min(TEMP_MAX as i64, t)) as usize;
                 }
             }
         }
@@ -3705,8 +3706,8 @@ impl Solver {
         read::<usize>()
     }
     fn measure(&self, set_values: &[usize]) -> Vec<usize> {
-        let mut sum = vec![vec![0usize; self.width]; self.n];
-        let mut norm = vec![vec![0usize; self.width]; self.n];
+        let mut sum = vec![vec![0usize; self.deltas.len()]; self.n];
+        let mut norm = vec![vec![0usize; self.deltas.len()]; self.n];
         let mut ask_cnt = 0usize;
         let mut tgt_st = BTreeSet::new();
         for val in set_values.iter().copied() {
@@ -3716,7 +3717,7 @@ impl Solver {
         let mut get_value = vec![0; self.n];
         loop {
             'scan: for gi in 0..self.n {
-                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate().take(self.width) {
+                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
                     let m = Self::ask(gi, dy, dx);
                     sum[gi][di] += m;
                     norm[gi][di] += 1;
@@ -3729,7 +3730,7 @@ impl Solver {
 
             get_value.iter_mut().for_each(|v| *v = 0);
             for gi in 0..self.n {
-                for di in 0..self.width {
+                for di in 0..self.deltas.len() {
                     debug_assert!(norm[gi][di] > 0);
                     let meas_mean = sum[gi][di] as f64 / norm[gi][di] as f64;
                     let mut delta_max = None;
@@ -3760,14 +3761,30 @@ impl Solver {
         get_value
     }
     fn answer(&self, set_values: Vec<usize>, get_values: Vec<usize>) {
-        let mut set_i = set_values.into_iter().enumerate().collect::<Vec<_>>();
-        set_i.sort_by_cached_key(|&x| x.1);
-        let mut get_i = get_values.into_iter().enumerate().collect::<Vec<_>>();
-        get_i.sort_by_cached_key(|&x| x.1);
+        let mut set_remains = BTreeSet::new();
+        for i in 0..self.n {
+            set_remains.insert(i);
+        }
         let mut ans = vec![None; self.n];
-        for ((set_i, _), (get_i, _)) in set_i.into_iter().zip(get_i.into_iter()) {
-            debug_assert!(ans[get_i].is_none());
-            ans[get_i] = Some(set_i);
+        for (gi, gv) in get_values.iter().copied().enumerate() {
+            for (si, sv) in set_values.iter().copied().enumerate() {
+                if !set_remains.contains(&si) {
+                    continue;
+                }
+                if gv == sv {
+                    ans[gi] = Some(si);
+                    set_remains.remove(&si);
+                    break;
+                }
+            }
+        }
+        for ans in ans.iter_mut() {
+            if ans.is_some() {
+                continue;
+            }
+            let &nxt = set_remains.iter().next().unwrap();
+            set_remains.remove(&nxt);
+            *ans = Some(nxt);
         }
         println!("-1 -1 -1");
         for ans in ans.into_iter().flatten() {
@@ -3781,6 +3798,7 @@ impl Solver {
         let mut best_temp_cost = self.calc_temp_cost(&best_temp);
         let mut try_cnt = 0usize;
         let mut update_cnt = 0usize;
+        let mut invalid_cnt = 0usize;
         while self.t0.elapsed().as_millis() < TIME_LIMIT {
             try_cnt += 1;
             if let Some(values) = self.gen_vals() {
@@ -3790,6 +3808,46 @@ impl Solver {
                     update_cnt += 1;
                     best_values = values;
                     best_temp = temp;
+                }
+            } else {
+                invalid_cnt += 1;
+            }
+            if update_cnt == 0 && self.t0.elapsed().as_millis() > 1000 && invalid_cnt >= 1000 {
+                let mut add_cnt = 0;
+                invalid_cnt = 0;
+                for d in D.. {
+                    let mut cands = vec![];
+                    for dy in - (self.l as i64 - 1)..self.l as i64 {
+                        for dx in - (self.l as i64 - 1)..self.l as i64 {
+                            let dyx = (dy.abs() + dx.abs()) as usize;
+                            if dyx != d {
+                                continue;
+                            }
+                            let dy = ((dy + self.l as i64) % self.l as i64) as usize;
+                            let dx = ((dx + self.l as i64) % self.l as i64) as usize;
+                            if !self.deltas.contains(&(dy, dx)) {
+                                cands.push((dy, dx));
+                            }
+                        }
+                    }
+                    if cands.is_empty() {
+                        continue;
+                    }
+                    let mut corder = (0..cands.len()).collect::<Vec<_>>();
+                    corder.shuffle(&mut self.rng);
+                    for co in corder {
+                        self.deltas.insert(cands[co]);
+                        add_cnt += 1;
+                        if add_cnt >= 4 {
+                            break;
+                        }
+                    }
+                    if add_cnt >= 4 {
+                        break;
+                    }
+                }
+                while self.value_order.len() < self.base.pow(self.deltas.len() as u32) {
+                    self.value_order.push(self.value_order.len());
                 }
             }
         }
