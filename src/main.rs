@@ -3892,7 +3892,11 @@ impl Solver {
             if let Some(values) = self.gen_vals() {
                 let temp = self.gen_temp_map(&values, self.l / 5);
                 let temp_cost = self.calc_temp_cost(temp);
-                if best_temp_cost.chmin(temp_cost) {
+                if !valid_once {
+                    update_cnt += 1;
+                    best_values = values;
+                    best_temp_cost = temp_cost;
+                } else if best_temp_cost.chmin(temp_cost) {
                     update_cnt += 1;
                     best_values = values;
                 } else {
