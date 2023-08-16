@@ -3500,24 +3500,12 @@ impl Solver {
             width += 1;
         }
         eprintln!("base: {}, width: {}", base, width);
-        let p = D % l;
-        let m = (l - D) % l;
         let mut deltas = BTreeSet::new();
-        for &delta in vec![
-            (0, 0),
-            (p, 0),
-            (0, p),
-            (m, 0),
-            (0, m),
-            (p, p),
-            (p, m),
-            (m, p),
-            (m, m),
-        ].iter().take(width) {
-            deltas.insert(delta);
-        }
+        deltas.insert((0, 0));
         let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
-        Self { t0, l, n, s, gates, rand, rng, base, deltas, value_order }
+        let mut ret = Self { t0, l, n, s, gates, rand, rng, base, deltas, value_order };
+        ret.widen_delta(width);
+        ret
     }
     fn gen_vals(&mut self) -> Option<Vec<usize>> {
         let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
