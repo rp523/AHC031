@@ -3798,7 +3798,41 @@ impl Solver {
             println!("{}", ans);
         }
     }
+    fn widen_delta(&mut self, tgt_len: usize) {
+        'widen: for d in D.. {
+            let mut cands = vec![];
+            for dy in - (self.l as i64 / 2)..self.l as i64 / 2 {
+                for dx in - (self.l as i64 / 2)..self.l as i64 / 2 {
+                    let dyx = (dy.abs() + dx.abs()) as usize;
+                    if dyx != d {
+                        continue;
+                    }
+                    let dy = ((dy + self.l as i64) % self.l as i64) as usize;
+                    let dx = ((dx + self.l as i64) % self.l as i64) as usize;
+                    if !self.deltas.contains(&(dy, dx)) {
+                        cands.push((dy, dx));
+                    }
+                }
+            }
+            if cands.is_empty() {
+                continue;
+            }
+            let mut corder = (0..cands.len()).collect::<Vec<_>>();
+            corder.shuffle(&mut self.rng);
+            for co in corder {
+                self.deltas.insert(cands[co]);
+                if self.deltas.len() >= tgt_len {
+                    break 'widen;
+                }
+            }
+        }
+        while self.value_order.len() < self.base.pow(self.deltas.len() as u32) {
+            self.value_order.push(self.value_order.len());
+        }
+
+    }
     fn solve(&mut self) {
+        eprintln!("l {} n {} s {}", self.l, self.n, self.s);
         let mut best_values = self.gen_vals_ini();
         // gen temperature map
         let temp = self.gen_temp_map(&best_values, 0);
@@ -3812,7 +3846,7 @@ impl Solver {
             let vl = self.value_order.len();
             let i0 = self.rand.next_usize() % vl;
             let i1 = (i0 + 1 + self.rand.next_usize() % (vl - 1)) % vl;
-            assert!(i0 != i1);
+            debug_assert!(i0 != i1);
             if !trans {
                 self.value_order.shuffle(&mut self.rng);
             } else {
@@ -3839,46 +3873,15 @@ impl Solver {
                 }
                 invalid_cnt += 1;
             }
-            if update_cnt == 0 && self.t0.elapsed().as_millis() > 1000 && invalid_cnt >= 1000 {
-                let mut add_cnt = 0;
+            if !trans && invalid_cnt >= 100 {
                 invalid_cnt = 0;
-                for d in D.. {
-                    let mut cands = vec![];
-                    for dy in - (self.l as i64 / 2)..self.l as i64 / 2 {
-                        for dx in - (self.l as i64 / 2)..self.l as i64 / 2 {
-                            let dyx = (dy.abs() + dx.abs()) as usize;
-                            if dyx != d {
-                                continue;
-                            }
-                            let dy = ((dy + self.l as i64) % self.l as i64) as usize;
-                            let dx = ((dx + self.l as i64) % self.l as i64) as usize;
-                            if !self.deltas.contains(&(dy, dx)) {
-                                cands.push((dy, dx));
-                            }
-                        }
-                    }
-                    if cands.is_empty() {
-                        continue;
-                    }
-                    let mut corder = (0..cands.len()).collect::<Vec<_>>();
-                    corder.shuffle(&mut self.rng);
-                    for co in corder {
-                        self.deltas.insert(cands[co]);
-                        add_cnt += 1;
-                        if add_cnt >= 4 {
-                            break;
-                        }
-                    }
-                    if add_cnt >= 4 {
-                        break;
-                    }
-                }
-                while self.value_order.len() < self.base.pow(self.deltas.len() as u32) {
-                    self.value_order.push(self.value_order.len());
-                }
+                self.widen_delta(self.deltas.len() + 1);
             }
         }
         eprintln!("{}/{}", update_cnt, try_cnt);
+        for (dy, dx) in self.deltas.iter() {
+            eprintln!("({} {})", dy, dx);
+        }
         let temp = self.gen_temp_map(&best_values, self.l * 2);
         Self::output_temp(temp);
         // question until adjascent temp delta is smaller than sigma
