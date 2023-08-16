@@ -13,12 +13,13 @@ def main():
         cmd = "./tester ./target/release/start < in/{0:04d}.txt > out/{0:04d}.txt".format(i, i)
         ret = subprocess.getoutput(cmd)
 
+        print("[{}]".format(i))
         for line in ret.split("\n"):
             found = line.find(key)
             if found != 0:
                 continue
             score = int(line[len(key):])
-            print(i, score)
-        #print("{}\n".format(i), ret)
+            print(score)
+        #print(ret)
 if __name__ == "__main__":
     main()
