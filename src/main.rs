@@ -3767,21 +3767,29 @@ impl Solver {
         let mut ans = vec![None; self.n];
         for (gi, gv) in get_values.iter().copied().enumerate() {
             for (si, sv) in set_values.iter().copied().enumerate() {
+                if gv != sv {
+                    continue;
+                }
                 if !set_remains.contains(&si) {
                     continue;
                 }
-                if gv == sv {
-                    ans[gi] = Some(si);
-                    set_remains.remove(&si);
-                    break;
-                }
+                ans[gi] = Some(si);
+                set_remains.remove(&si);
+                break;
             }
         }
-        for ans in ans.iter_mut() {
+        for (gi, ans) in ans.iter_mut().enumerate() {
             if ans.is_some() {
                 continue;
             }
-            let &nxt = set_remains.iter().next().unwrap();
+            let mut dmin = None;
+            let mut nxt = 0;
+            for si in set_remains.iter().copied() {
+                let d = (set_values[si] ^ get_values[gi]).count_ones();
+                if dmin.chmin(d) {
+                    nxt = si;
+                }
+            }
             set_remains.remove(&nxt);
             *ans = Some(nxt);
         }
