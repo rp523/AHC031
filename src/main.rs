@@ -3605,7 +3605,7 @@ impl Solver {
     }
     fn calc_set_temp(&self, level: usize) -> usize {
         debug_assert!(level < self.base);
-        let unit = TEMP_MAX as f64 / (self.base - 1) as f64;
+        let unit = 2.0 * SET_SIG_RATE * self.s;
         min((unit * level as f64) as usize, TEMP_MAX)
     }
     fn gen_temp_map(&self, values: &[usize], smooth_loop: usize) -> Vec<Vec<usize>> {
