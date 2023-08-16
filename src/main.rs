@@ -3469,7 +3469,7 @@ use rand_chacha::ChaChaRng;
 const TEMP_MAX: usize = 1000;
 const SET_SIG_RATE: f64 = 1.0;
 const D: usize = 2;
-const TIME_LIMIT:u128 = 3_000;
+const TIME_LIMIT:u128 = 3_800;
 struct Solver {
     t0: Instant,
     l: usize,
@@ -3767,14 +3767,16 @@ impl Solver {
                 get_st.insert(val);
             }
             if get_st == tgt_st {
-                if !finalize {
-                    eprintln!("FULL MATCH!");
-                }
                 if self.s > TEMP_MAX as f64 * 0.5 {
+                    if finalize {
+                        break;
+                    }
                     finalize = true;
                 } else {
                     break;
                 }
+            } else {
+                finalize = false;
             }
             if ask_cnt >= 10000 {
                 break;
@@ -3864,6 +3866,7 @@ impl Solver {
         let mut update_cnt = 0usize;
         let mut invalid_cnt = 0usize;
         let mut trans = false;
+        let mut valid_once = false;
         while self.t0.elapsed().as_millis() < TIME_LIMIT {
             try_cnt += 1;
             let vl = self.value_order.len();
@@ -3881,24 +3884,25 @@ impl Solver {
                 if best_temp_cost.chmin(temp_cost) {
                     update_cnt += 1;
                     best_values = values;
-                    if !trans {
-                        eprintln!("trans: {}", try_cnt);
-                    }
-                    trans = true;
                 } else {
                     if trans {
                         self.value_order.swap(i0, i1);
                     }
                 }
+                invalid_cnt = 0;
+                valid_once = true;
             } else {
                 if trans {
                     self.value_order.swap(i0, i1);
                 }
                 invalid_cnt += 1;
             }
-            if !trans && invalid_cnt >= 100 {
+            if !valid_once && invalid_cnt >= 100 {
                 invalid_cnt = 0;
                 self.widen_delta(self.deltas.len() + 1);
+            }
+            if valid_once { //&& self.t0.elapsed().as_millis() > 0 {
+                trans = true;
             }
         }
         eprintln!("{}/{}", update_cnt, try_cnt);
