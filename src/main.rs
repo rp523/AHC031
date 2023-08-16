@@ -3608,7 +3608,7 @@ impl Solver {
         let unit = TEMP_MAX as f64 / (self.base - 1) as f64;
         min((unit * level as f64) as usize, TEMP_MAX)
     }
-    fn gen_temp_map(&self, values: &[usize]) -> Vec<Vec<usize>> {
+    fn gen_temp_map(&self, values: &[usize], smooth_loop: usize) -> Vec<Vec<usize>> {
         let mut temp = vec![vec![0; self.l]; self.l];
         let mut done = vec![vec![false; self.l]; self.l];
         let mut temp_sum = 0;
@@ -3642,7 +3642,7 @@ impl Solver {
         }
         // smoothing
         let rate = 0.1;
-        for _ in 0..20 {
+        for _ in 0..smooth_loop {
             let mut grad = vec![vec![0; self.l]; self.l];
             let mut grad_abs_sum = 0;
             for y0 in 0..self.l {
@@ -3678,7 +3678,7 @@ impl Solver {
         }
         temp
     }
-    fn calc_temp_cost(&self, temp: &[Vec<usize>]) -> i64 {
+    fn calc_temp_cost(&self, temp: Vec<Vec<usize>>) -> i64 {
         let mut cost = 0;
         for y in 0..self.l {
             for x in 0..self.l {
@@ -3692,9 +3692,9 @@ impl Solver {
         }
         cost
     }
-    fn output_temp(temp: &[Vec<usize>]) {
-        for temp_row in temp.iter() {
-            for temp_val in temp_row.iter() {
+    fn output_temp(temp: Vec<Vec<usize>>) {
+        for temp_row in temp {
+            for temp_val in temp_row {
                 print!("{} ", temp_val);
             }
             println!();
@@ -3801,8 +3801,8 @@ impl Solver {
     fn solve(&mut self) {
         let mut best_values = self.gen_vals_ini();
         // gen temperature map
-        let mut best_temp = self.gen_temp_map(&best_values);
-        let mut best_temp_cost = self.calc_temp_cost(&best_temp);
+        let temp = self.gen_temp_map(&best_values, 0);
+        let mut best_temp_cost = self.calc_temp_cost(temp);
         let mut try_cnt = 0usize;
         let mut update_cnt = 0usize;
         let mut invalid_cnt = 0usize;
@@ -3819,12 +3819,14 @@ impl Solver {
                 self.value_order.swap(i0, i1);
             }
             if let Some(values) = self.gen_vals() {
-                let temp = self.gen_temp_map(&values);
-                let temp_cost = self.calc_temp_cost(&temp);
+                let temp = self.gen_temp_map(&values, self.l / 5);
+                let temp_cost = self.calc_temp_cost(temp);
                 if best_temp_cost.chmin(temp_cost) {
                     update_cnt += 1;
                     best_values = values;
-                    best_temp = temp;
+                    if !trans {
+                        eprintln!("trans: {}", try_cnt);
+                    }
                     trans = true;
                 } else {
                     if trans {
@@ -3842,8 +3844,8 @@ impl Solver {
                 invalid_cnt = 0;
                 for d in D.. {
                     let mut cands = vec![];
-                    for dy in - (self.l as i64 - 1)..self.l as i64 {
-                        for dx in - (self.l as i64 - 1)..self.l as i64 {
+                    for dy in - (self.l as i64 / 2)..self.l as i64 / 2 {
+                        for dx in - (self.l as i64 / 2)..self.l as i64 / 2 {
                             let dyx = (dy.abs() + dx.abs()) as usize;
                             if dyx != d {
                                 continue;
@@ -3877,7 +3879,8 @@ impl Solver {
             }
         }
         eprintln!("{}/{}", update_cnt, try_cnt);
-        Self::output_temp(&best_temp);
+        let temp = self.gen_temp_map(&best_values, self.l * 2);
+        Self::output_temp(temp);
         // question until adjascent temp delta is smaller than sigma
         let get_values = self.measure(&best_values);
         self.answer(best_values, get_values);
