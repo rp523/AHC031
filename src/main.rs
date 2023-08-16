@@ -3721,14 +3721,16 @@ impl Solver {
             get_value_st.incr(v);
         }
         loop {
+            let mut unstable_update = false;
             'scan: for gi in 0..self.n {
-                if !finalize && self.s > TEMP_MAX as f64 * 0.5 {
+                if !finalize {
                     if let Some(&nm) = get_value_st.get(&get_value[gi]) {
-                        if nm == 1 && tgt_st.contains(&get_value[gi]) && *norm[gi].iter().min().unwrap() >= 10 {
+                        if nm == 1 && tgt_st.contains(&get_value[gi]) {
                             continue;
                         }
                     }
                 }
+                unstable_update = true;
                 for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
                     let m = Self::ask(gi, dy, dx);
                     sum[gi][di] += m;
@@ -3736,6 +3738,19 @@ impl Solver {
                     ask_cnt += 1;
                     if ask_cnt >= 10000 {
                         break 'scan;
+                    }
+                }
+            }
+            if !unstable_update {
+                'scan: for gi in 0..self.n {
+                    for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
+                        let m = Self::ask(gi, dy, dx);
+                        sum[gi][di] += m;
+                        norm[gi][di] += 1;
+                        ask_cnt += 1;
+                        if ask_cnt >= 10000 {
+                            break 'scan;
+                        }
                     }
                 }
             }
@@ -3767,14 +3782,10 @@ impl Solver {
                 get_st.insert(val);
             }
             if get_st == tgt_st {
-                if self.s > TEMP_MAX as f64 * 0.5 {
-                    if finalize {
-                        break;
-                    }
-                    finalize = true;
-                } else {
+                if finalize {
                     break;
                 }
+                finalize = true;
             } else {
                 finalize = false;
             }
