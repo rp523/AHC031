@@ -3881,7 +3881,7 @@ impl Solver {
         while self.t0.elapsed().as_millis() < TIME_LIMIT {
             try_cnt += 1;
             let vl = self.value_order.len();
-            let i0 = self.rand.next_usize() % vl;
+            let i0 = self.rand.next_usize() % self.n;
             let i1 = (i0 + 1 + self.rand.next_usize() % (vl - 1)) % vl;
             debug_assert!(i0 != i1);
             if !trans {
