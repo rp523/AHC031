@@ -3709,13 +3709,26 @@ impl Solver {
         let mut norm = vec![vec![0usize; self.deltas.len()]; self.n];
         let mut ask_cnt = 0usize;
         let mut tgt_st = BTreeSet::new();
+        let mut finalize = false;
         for val in set_values.iter().copied() {
             tgt_st.insert(val);
         }
+        let tgt_st = tgt_st;
         debug_assert!(set_values.len() == tgt_st.len());
         let mut get_value = vec![0; self.n];
+        let mut get_value_st = BTreeMap::new();
+        for v in get_value.iter().copied() {
+            get_value_st.incr(v);
+        }
         loop {
             'scan: for gi in 0..self.n {
+                if !finalize && self.s > TEMP_MAX as f64 * 0.5 {
+                    if let Some(&nm) = get_value_st.get(&get_value[gi]) {
+                        if nm == 1 && tgt_st.contains(&get_value[gi]) && *norm[gi].iter().min().unwrap() >= 10 {
+                            continue;
+                        }
+                    }
+                }
                 for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
                     let m = Self::ask(gi, dy, dx);
                     sum[gi][di] += m;
@@ -3744,14 +3757,24 @@ impl Solver {
                     get_value[gi] += self.base.pow(di as u32) * level;
                 }
             }
+            get_value_st.clear();
+            for v in get_value.iter().copied() {
+                get_value_st.incr(v);
+            }
 
             let mut get_st = BTreeSet::new();
             for val in get_value.iter().copied() {
                 get_st.insert(val);
             }
             if get_st == tgt_st {
-                eprintln!("FULL MATCH!");
-                break;
+                if !finalize {
+                    eprintln!("FULL MATCH!");
+                }
+                if self.s > TEMP_MAX as f64 * 0.5 {
+                    finalize = true;
+                } else {
+                    break;
+                }
             }
             if ask_cnt >= 10000 {
                 break;
