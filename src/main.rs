@@ -3722,7 +3722,7 @@ impl Solver {
         println!("{} {} {}", i, dy, dx);
         read::<usize>()
     }
-    fn measure(&self, set_values: &[usize]) -> Vec<usize> {
+    fn measure(&self, set_values: &[usize]) -> (Vec<usize>, Vec<Vec<f64>>) {
         let mut sum = vec![vec![0usize; self.deltas.len()]; self.n];
         let mut norm = vec![vec![0usize; self.deltas.len()]; self.n];
         let mut ask_cnt = 0usize;
@@ -3807,41 +3807,46 @@ impl Solver {
                 break;
             }
         }
-        get_value
+        let meas_mean = sum
+            .into_iter()
+            .zip(norm.into_iter())
+            .map(|(sum, norm)| {
+                sum.into_iter()
+                    .zip(norm.into_iter())
+                    .map(|(sum, norm)| sum as f64 / norm as f64)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        (get_value, meas_mean)
     }
-    fn answer(&self, set_values: Vec<usize>, get_values: Vec<usize>) {
-        let mut set_remains = BTreeSet::new();
-        for i in 0..self.n {
-            set_remains.insert(i);
-        }
-        let mut ans = vec![None; self.n];
-        for (gi, gv) in get_values.iter().copied().enumerate() {
-            for (si, sv) in set_values.iter().copied().enumerate() {
-                if gv != sv {
-                    continue;
+    fn answer(&self, set_values: Vec<usize>, _get_values: Vec<usize>, meas_mean: Vec<Vec<f64>>) {
+        let mut lis = vec![];
+        for (gi, meas_mean) in meas_mean.into_iter().enumerate() {
+            for (si, sval) in set_values.iter().copied().enumerate() {
+                let mut sv = sval;
+                let mut dif = 0.0;
+                for meas_mean in meas_mean.iter().copied() {
+                    let sd = sv % self.base;
+                    sv /= self.base;
+                    let st = self.calc_set_temp(sd);
+                    let dif1 = (st as f64 - meas_mean).abs();
+                    dif += dif1;
                 }
-                if !set_remains.contains(&si) {
-                    continue;
-                }
-                ans[gi] = Some(si);
-                set_remains.remove(&si);
-                break;
+                lis.push((dif, gi, si));
             }
         }
-        for (gi, ans) in ans.iter_mut().enumerate() {
-            if ans.is_some() {
+        lis.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+        let mut ans = vec![None; self.n];
+        let mut set_used = vec![false; self.n];
+        for (_, gi, si) in lis.into_iter() {
+            if set_used[si] {
                 continue;
             }
-            let mut dmin = None;
-            let mut nxt = 0;
-            for si in set_remains.iter().copied() {
-                let d = (set_values[si] ^ get_values[gi]).count_ones();
-                if dmin.chmin(d) {
-                    nxt = si;
-                }
+            if ans[gi].is_some() {
+                continue;
             }
-            set_remains.remove(&nxt);
-            *ans = Some(nxt);
+            set_used[si] = true;
+            ans[gi] = Some(si);
         }
         println!("-1 -1 -1");
         for ans in ans.into_iter().flatten() {
@@ -3937,8 +3942,8 @@ impl Solver {
         let temp = self.gen_temp_map(&best_values, self.l * 2);
         Self::output_temp(temp);
         // question until adjascent temp delta is smaller than sigma
-        let get_values = self.measure(&best_values);
-        self.answer(best_values, get_values);
+        let (get_values, meas_mean) = self.measure(&best_values);
+        self.answer(best_values, get_values, meas_mean);
     }
 }
 fn main() {
