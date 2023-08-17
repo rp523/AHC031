@@ -3526,13 +3526,16 @@ impl Solver {
         let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
-        for gi in self.gen_gate_order.iter().copied() {
+        for gi in 0..self.n {
             let (y0, x0) = self.gates[gi];
             let mut valset = false;
-            for gate_val0 in (0..val_remains.len()).map(|i| self.value_order[i]).filter(|&value| val_remains[value]) {
+            for gate_val0 in (0..val_remains.len()).map(|i| self.value_order[i]) {
+                if !val_remains[gate_val0] {
+                    continue;
+                }
                 let mut digit_ok = true;
                 let mut gate_val = gate_val0;
-                for (dy, dx) in self.deltas.iter().copied().take(self.deltas.len()) {
+                for (dy, dx) in self.deltas.iter().copied() {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
                     let digit = gate_val % self.base;
@@ -3554,8 +3557,8 @@ impl Solver {
                     let x = (x0 + dx) % self.l;
                     let digit = gate_val % self.base;
                     gate_val /= self.base;
-                    if field[y][x].is_some() {
-                        debug_assert!(field[y][x].unwrap() == digit);
+                    if let Some(org) = field[y][x] {
+                        debug_assert!(org == digit);
                         continue;
                     }
                     field[y][x] = Some(digit);
@@ -3626,7 +3629,7 @@ impl Solver {
                 val /= self.base;
                 let temp_val = self.calc_set_temp(level);
                 if done[y][x] {
-                    debug_assert!(temp[y][x] == temp_val);
+                    debug_assert!(smooth_loop == 0 || temp[y][x] == temp_val);
                     continue;
                 }
                 temp[y][x] = temp_val;
