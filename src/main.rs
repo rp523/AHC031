@@ -3481,6 +3481,7 @@ struct Solver {
     base: usize,
     deltas: BTreeSet<(usize, usize)>,
     value_order: Vec<usize>,
+    gen_gate_order: Vec<usize>,
 }
 impl Solver {
     fn new() -> Self {
@@ -3491,7 +3492,7 @@ impl Solver {
         let gates = (0..n).map(|_| (read::<usize>(), read::<usize>())).collect::<Vec<_>>();
         let rand = XorShift64::new();
         let seed = [0; 32];
-        let rng = ChaChaRng::from_seed(seed);
+        let mut rng = ChaChaRng::from_seed(seed);
 
         let div_unit = (2.0 * SET_SIG_RATE * s) as usize;
         let base = max(2, TEMP_MAX / div_unit);
@@ -3517,13 +3518,16 @@ impl Solver {
             deltas.insert(delta);
         }
         let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
-        Self { t0, l, n, s, gates, rand, rng, base, deltas, value_order }
+        let mut gen_gate_order = (0..n).collect::<Vec<_>>();
+        gen_gate_order.shuffle(&mut rng);
+        Self { t0, l, n, s, gates, rand, rng, base, deltas, value_order, gen_gate_order }
     }
     fn gen_vals(&mut self) -> Option<Vec<usize>> {
         let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
-        for (gi, (y0, x0)) in self.gates.iter().copied().enumerate() {
+        for gi in self.gen_gate_order.iter().copied() {
+            let (y0, x0) = self.gates[gi];
             let mut valset = false;
             for gate_val0 in (0..val_remains.len()).map(|i| self.value_order[i]).filter(|&value| val_remains[value]) {
                 let mut digit_ok = true;
