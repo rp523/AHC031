@@ -3927,9 +3927,6 @@ impl Solver {
 
         // finalize
         eprintln!("{}/{}/{}", debug_update_cnt, debug_valid_cnt, debug_try_cnt);
-        for (dy, dx) in self.deltas.iter() {
-            eprintln!("({} {})", dy, dx);
-        }
         let best_values = if let Some(best_values) = self.gen_vals(&value_order) {
             best_values
         } else {
