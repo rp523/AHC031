@@ -3829,7 +3829,7 @@ impl Solver {
                     let sd = sv % self.base;
                     sv /= self.base;
                     let st = self.calc_set_temp(sd);
-                    let dif1 = (st as f64 - meas_mean).abs();
+                    let dif1 = (st as f64 - meas_mean).powi(2);
                     dif += dif1;
                 }
                 lis.push((dif, gi, si));
