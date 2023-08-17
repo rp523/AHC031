@@ -3712,7 +3712,13 @@ impl Solver {
             println!();
         }
     }
-    fn ask(i: usize, dy: usize, dx: usize) -> usize {
+    fn ask(&self, i: usize, dy0: usize, dx0: usize) -> usize {
+        let pdy = dy0 as i64;
+        let ndy = dy0 as i64 - self.l as i64;
+        let dy = if pdy.abs() < ndy.abs() { pdy } else { ndy };
+        let pdx = dx0 as i64;
+        let ndx = dx0 as i64 - self.l as i64;
+        let dx = if pdx.abs() < ndx.abs() { pdx } else { ndx };
         println!("{} {} {}", i, dy, dx);
         read::<usize>()
     }
@@ -3720,10 +3726,10 @@ impl Solver {
         let mut sum = vec![vec![0usize; self.deltas.len()]; self.n];
         let mut norm = vec![vec![0usize; self.deltas.len()]; self.n];
         let mut ask_cnt = 0usize;
-        let mut tgt_st = BTreeSet::new();
+        let mut tgt_st = BTreeMap::new();
         let mut finalize = false;
         for val in set_values.iter().copied() {
-            tgt_st.insert(val);
+            tgt_st.incr(val);
         }
         let tgt_st = tgt_st;
         debug_assert!(set_values.len() == tgt_st.len());
@@ -3737,14 +3743,14 @@ impl Solver {
             'scan: for gi in 0..self.n {
                 if !finalize {
                     if let Some(&nm) = get_value_st.get(&get_value[gi]) {
-                        if nm == 1 && tgt_st.contains(&get_value[gi]) {
+                        if nm == 1 && tgt_st.contains_key(&get_value[gi]) {
                             continue;
                         }
                     }
                 }
                 unstable_update = true;
                 for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
-                    let m = Self::ask(gi, dy, dx);
+                    let m = self.ask(gi, dy, dx);
                     sum[gi][di] += m;
                     norm[gi][di] += 1;
                     ask_cnt += 1;
@@ -3756,7 +3762,7 @@ impl Solver {
             if !unstable_update {
                 'scan: for gi in 0..self.n {
                     for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
-                        let m = Self::ask(gi, dy, dx);
+                        let m = self.ask(gi, dy, dx);
                         sum[gi][di] += m;
                         norm[gi][di] += 1;
                         ask_cnt += 1;
@@ -3789,11 +3795,7 @@ impl Solver {
                 get_value_st.incr(v);
             }
 
-            let mut get_st = BTreeSet::new();
-            for val in get_value.iter().copied() {
-                get_st.insert(val);
-            }
-            if get_st == tgt_st {
+            if get_value_st == tgt_st {
                 if finalize {
                     break;
                 }
@@ -3865,13 +3867,13 @@ impl Solver {
             if cands.is_empty() {
                 continue;
             }
-            let mut corder = (0..cands.len()).collect::<Vec<_>>();
-            corder.shuffle(&mut self.rng);
-            for co in corder {
-                self.deltas.insert(cands[co]);
-                if self.deltas.len() >= tgt_len {
-                    break 'widen;
-                }
+            cands.shuffle(&mut self.rng);
+            let ln = tgt_len - self.deltas.len();
+            for cand in cands.into_iter().take(ln) {
+                self.deltas.insert(cand);
+            }
+            if self.deltas.len() >= tgt_len {
+                break 'widen;
             }
         }
         while value_order.len() < self.base.pow(self.deltas.len() as u32) {

@@ -7,14 +7,16 @@ def main():
     cargo build --release && ./tester ./target/release/start < in/0009.txt > out.txt
     '''
     ini_cmd = "cargo build --release"
+    #ini_cmd = "cargo build"
     subprocess.getoutput(ini_cmd)
     key = "Score = "
     score_sum = 0
     score_norm = 0
     min_score = -1
     min_score_idx = -1
-    for i in range(10):
+    for i in range(100):
         cmd = "./tester ./target/release/start < in/{0:04d}.txt > out/{0:04d}.txt".format(i, i)
+        #cmd = "./tester ./target/debug/start < in/{0:04d}.txt > out/{0:04d}.txt".format(i, i)
         ret = subprocess.getoutput(cmd)
 
         for line in ret.split("\n"):
