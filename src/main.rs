@@ -3463,13 +3463,13 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////
 
-use std::time::Instant;
 use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaChaRng;
+use std::time::Instant;
 const TEMP_MAX: usize = 1000;
 const SET_SIG_RATE: f64 = 1.0;
 const D: usize = 2;
-const TIME_LIMIT:u128 = 3_800;
+const TIME_LIMIT: u128 = 3_800;
 struct Solver {
     t0: Instant,
     l: usize,
@@ -3489,7 +3489,9 @@ impl Solver {
         let l = read::<usize>();
         let n = read::<usize>();
         let s = read::<f64>();
-        let gates = (0..n).map(|_| (read::<usize>(), read::<usize>())).collect::<Vec<_>>();
+        let gates = (0..n)
+            .map(|_| (read::<usize>(), read::<usize>()))
+            .collect::<Vec<_>>();
         let rand = XorShift64::new();
         let seed = [0; 32];
         let mut rng = ChaChaRng::from_seed(seed);
@@ -3514,19 +3516,34 @@ impl Solver {
             (p, m),
             (m, p),
             (m, m),
-        ].iter().take(width) {
+        ]
+        .iter()
+        .take(width)
+        {
             deltas.insert(delta);
         }
         let value_order = (0..base.pow(width as u32)).collect::<Vec<_>>();
         let mut gen_gate_order = (0..n).collect::<Vec<_>>();
         gen_gate_order.shuffle(&mut rng);
-        Self { t0, l, n, s, gates, rand, rng, base, deltas, value_order, gen_gate_order }
+        Self {
+            t0,
+            l,
+            n,
+            s,
+            gates,
+            rand,
+            rng,
+            base,
+            deltas,
+            value_order,
+            gen_gate_order,
+        }
     }
     fn gen_vals(&mut self) -> Option<Vec<usize>> {
         let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
-        for gi in 0..self.n {
+        for gi in self.gen_gate_order.iter().copied() {
             let (y0, x0) = self.gates[gi];
             let mut valset = false;
             for gate_val0 in (0..val_remains.len()).map(|i| self.value_order[i]) {
@@ -3658,7 +3675,7 @@ impl Solver {
                         let y1 = (y0 + dy) % self.l;
                         let x1 = (x0 + dx) % self.l;
                         let rise_grad0 = 2 * (temp[y0][x0] as i64 - temp[y1][x1] as i64);
-                        let rise_grad1 = - rise_grad0;
+                        let rise_grad1 = -rise_grad0;
                         if !done[y0][x0] {
                             grad[y0][x0] += rise_grad0;
                             grad_abs_sum += rise_grad0.abs();
@@ -3844,8 +3861,8 @@ impl Solver {
     fn widen_delta(&mut self, tgt_len: usize) {
         'widen: for d in D.. {
             let mut cands = vec![];
-            for dy in - (self.l as i64 / 2)..self.l as i64 / 2 {
-                for dx in - (self.l as i64 / 2)..self.l as i64 / 2 {
+            for dy in -(self.l as i64 / 2)..self.l as i64 / 2 {
+                for dx in -(self.l as i64 / 2)..self.l as i64 / 2 {
                     let dyx = (dy.abs() + dx.abs()) as usize;
                     if dyx != d {
                         continue;
@@ -3872,7 +3889,6 @@ impl Solver {
         while self.value_order.len() < self.base.pow(self.deltas.len() as u32) {
             self.value_order.push(self.value_order.len());
         }
-
     }
     fn solve(&mut self) {
         eprintln!("l {} n {} s {}", self.l, self.n, self.s);
@@ -3906,10 +3922,8 @@ impl Solver {
                 } else if best_temp_cost.chmin(temp_cost) {
                     update_cnt += 1;
                     best_values = values;
-                } else {
-                    if trans {
-                        self.value_order.swap(i0, i1);
-                    }
+                } else if trans {
+                    self.value_order.swap(i0, i1);
                 }
                 invalid_cnt = 0;
                 valid_once = true;
@@ -3923,7 +3937,8 @@ impl Solver {
                 invalid_cnt = 0;
                 self.widen_delta(self.deltas.len() + 1);
             }
-            if valid_once { //&& self.t0.elapsed().as_millis() > 0 {
+            if valid_once {
+                //&& self.t0.elapsed().as_millis() > 0 {
                 trans = true;
             }
         }
