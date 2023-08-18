@@ -3479,7 +3479,6 @@ struct Solver {
     rand: XorShift64,
     rng: ChaChaRng,
     base: usize,
-    deltas: BTreeSet<(usize, usize)>,
     gen_gate_order: Vec<usize>,
 }
 impl Solver {
@@ -3496,31 +3495,7 @@ impl Solver {
         let mut rng = ChaChaRng::from_seed(seed);
 
         let div_unit = (2.0 * SET_SIG_RATE * s) as usize;
-        let base = max(2, TEMP_MAX / div_unit);
-        let mut width = 1usize;
-        while base.pow(width as u32) < n {
-            width += 1;
-        }
-        eprintln!("base: {}, width: {}", base, width);
-        let p = D % l;
-        let m = (l - D) % l;
-        let mut deltas = BTreeSet::new();
-        for &delta in vec![
-            (0, 0),
-            (p, 0),
-            (0, p),
-            (m, 0),
-            (0, m),
-            (p, p),
-            (p, m),
-            (m, p),
-            (m, m),
-        ]
-        .iter()
-        .take(width)
-        {
-            deltas.insert(delta);
-        }
+        let base = max(2, (TEMP_MAX / div_unit) as i64 - 3) as usize;
         let mut gen_gate_order = (0..n).collect::<Vec<_>>();
         gen_gate_order.shuffle(&mut rng);
         Self {
@@ -3532,12 +3507,16 @@ impl Solver {
             rand,
             rng,
             base,
-            deltas,
             gen_gate_order,
         }
     }
-    fn gen_vals(&mut self, value_order: &[usize]) -> Option<Vec<usize>> {
-        let mut val_remains = vec![true; self.base.pow(self.deltas.len() as u32)];
+    fn gen_vals(
+        &mut self,
+        deltas: &[(usize, usize)],
+        width: usize,
+        value_order: &[usize],
+    ) -> Option<Vec<usize>> {
+        let mut val_remains = vec![true; self.base.pow(width as u32)];
         let mut field = vec![vec![None; self.l]; self.l];
         let mut values = vec![0; self.n];
         for gi in self.gen_gate_order.iter().copied() {
@@ -3549,7 +3528,7 @@ impl Solver {
                 }
                 let mut digit_ok = true;
                 let mut gate_val = gate_val0;
-                for (dy, dx) in self.deltas.iter().copied() {
+                for (dy, dx) in deltas.iter().take(width).copied() {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
                     let digit = gate_val % self.base;
@@ -3566,7 +3545,7 @@ impl Solver {
                 }
                 // found valid value!
                 let mut gate_val = gate_val0;
-                for (dy, dx) in self.deltas.iter().copied() {
+                for (dy, dx) in deltas.iter().take(width).copied() {
                     let y = (y0 + dy) % self.l;
                     let x = (x0 + dx) % self.l;
                     let digit = gate_val % self.base;
@@ -3591,13 +3570,13 @@ impl Solver {
             let mut st = BTreeSet::new();
             for v in values.iter().copied() {
                 st.insert(v);
-                debug_assert!(v < self.base.pow(self.deltas.len() as u32));
+                debug_assert!(v < self.base.pow(width as u32));
             }
             debug_assert!(st.len() == values.len());
             let mut field = vec![vec![None; self.l]; self.l];
             for (gi, gvalue) in values.iter().copied().enumerate() {
                 let (gy, gx) = self.gates[gi];
-                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
+                for (di, (dy, dx)) in deltas.iter().take(width).copied().enumerate() {
                     let y = (gy + dy) % self.l;
                     let x = (gx + dx) % self.l;
                     let mut digit = gvalue;
@@ -3620,14 +3599,20 @@ impl Solver {
         let unit = 2.0 * SET_SIG_RATE * self.s;
         min((unit * level as f64) as usize, TEMP_MAX)
     }
-    fn gen_temp_map(&self, values: &[usize], smooth_loop: usize) -> Vec<Vec<usize>> {
+    fn gen_temp_map(
+        &self,
+        deltas: &[(usize, usize)],
+        width: usize,
+        values: &[usize],
+        smooth_loop: usize,
+    ) -> Vec<Vec<usize>> {
         let mut temp = vec![vec![0; self.l]; self.l];
         let mut done = vec![vec![false; self.l]; self.l];
         let mut temp_sum = 0;
         let mut temp_norm = 0;
         for ((y0, x0), val0) in self.gates.iter().zip(values.iter().copied()) {
             let mut val = val0;
-            for (dy, dx) in self.deltas.iter().copied() {
+            for (dy, dx) in deltas.iter().copied().take(width) {
                 let y = (y0 + dy) % self.l;
                 let x = (x0 + dx) % self.l;
                 let level = val % self.base;
@@ -3722,9 +3707,14 @@ impl Solver {
         println!("{} {} {}", i, dy, dx);
         read::<usize>()
     }
-    fn measure(&self, set_values: &[usize]) -> (Vec<usize>, Vec<Vec<f64>>) {
-        let mut sum = vec![vec![0usize; self.deltas.len()]; self.n];
-        let mut norm = vec![vec![0usize; self.deltas.len()]; self.n];
+    fn measure(
+        &self,
+        deltas: &[(usize, usize)],
+        width: usize,
+        set_values: &[usize],
+    ) -> (Vec<usize>, Vec<Vec<f64>>) {
+        let mut sum = vec![vec![0usize; width]; self.n];
+        let mut norm = vec![vec![0usize; width]; self.n];
         let mut ask_cnt = 0usize;
         let mut tgt_st = BTreeMap::new();
         let mut finalize = false;
@@ -3749,7 +3739,7 @@ impl Solver {
                     }
                 }
                 unstable_update = true;
-                for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
+                for (di, (dy, dx)) in deltas.iter().take(width).copied().enumerate() {
                     let m = self.ask(gi, dy, dx);
                     sum[gi][di] += m;
                     norm[gi][di] += 1;
@@ -3761,7 +3751,7 @@ impl Solver {
             }
             if !unstable_update {
                 'scan: for gi in 0..self.n {
-                    for (di, (dy, dx)) in self.deltas.iter().copied().enumerate() {
+                    for (di, (dy, dx)) in deltas.iter().take(width).copied().enumerate() {
                         let m = self.ask(gi, dy, dx);
                         sum[gi][di] += m;
                         norm[gi][di] += 1;
@@ -3775,7 +3765,7 @@ impl Solver {
 
             get_value.iter_mut().for_each(|v| *v = 0);
             for gi in 0..self.n {
-                for di in 0..self.deltas.len() {
+                for di in 0..width {
                     debug_assert!(norm[gi][di] > 0);
                     let meas_mean = sum[gi][di] as f64 / norm[gi][di] as f64;
                     let mut delta_max = None;
@@ -3854,40 +3844,30 @@ impl Solver {
         }
     }
     fn widen_delta(&mut self, tgt_len: usize, value_order: &mut Vec<usize>) {
-        'widen: for d in D.. {
-            let mut cands = vec![];
-            for dy in -(self.l as i64 / 2)..self.l as i64 / 2 {
-                for dx in -(self.l as i64 / 2)..self.l as i64 / 2 {
-                    let dyx = (dy.abs() + dx.abs()) as usize;
-                    if dyx != d {
-                        continue;
-                    }
-                    let dy = ((dy + self.l as i64) % self.l as i64) as usize;
-                    let dx = ((dx + self.l as i64) % self.l as i64) as usize;
-                    if !self.deltas.contains(&(dy, dx)) {
-                        cands.push((dy, dx));
-                    }
-                }
-            }
-            if cands.is_empty() {
-                continue;
-            }
-            cands.shuffle(&mut self.rng);
-            let ln = tgt_len - self.deltas.len();
-            for cand in cands.into_iter().take(ln) {
-                self.deltas.insert(cand);
-            }
-            if self.deltas.len() >= tgt_len {
-                break 'widen;
-            }
-        }
-        while value_order.len() < self.base.pow(self.deltas.len() as u32) {
+        while value_order.len() < self.base.pow(tgt_len as u32) {
             value_order.push(value_order.len());
         }
     }
     fn solve(&mut self) {
         eprintln!("l {} n {} s {}", self.l, self.n, self.s);
-        let mut value_order = (0..self.base.pow(self.deltas.len() as u32)).collect::<Vec<_>>();
+        let mut deltas = vec![];
+        for y in 0..self.l {
+            for x in 0..self.l {
+                let dy = min(y, (self.l - y) % self.l);
+                let dx = min(x, (self.l - x) % self.l);
+                if (dy + dx).pow(2) * 2 > self.n {
+                    continue;
+                }
+                deltas.push((y, x));
+            }
+        }
+        deltas.shuffle(&mut self.rng);
+        let mut width = 1usize;
+        while self.base.pow(width as u32) < self.n {
+            width += 1;
+        }
+
+        let mut value_order = (0..self.base.pow(width as u32)).collect::<Vec<_>>();
         // gen temperature map
         let mut best_temp_cost = None;
         let mut debug_try_cnt = 0usize;
@@ -3895,36 +3875,54 @@ impl Solver {
         let mut debug_update_cnt = 0usize;
         let mut invalid_cnt = 0usize;
         let mut trans = false;
+
         while self.t0.elapsed().as_millis() < TIME_LIMIT {
             debug_try_cnt += 1;
             let vl = value_order.len();
             let i0 = self.rand.next_usize() % self.n;
             let i1 = (i0 + 1 + self.rand.next_usize() % (vl - 1)) % vl;
+            let dl = deltas.len();
+            let di0 = self.rand.next_usize() % width;
+            let di1 = (di0 + 1 + self.rand.next_usize() % (dl - 1)) % dl;
+            let tt = self.rand.next_usize() % 100;
             debug_assert!(i0 != i1);
             if !trans {
                 value_order.shuffle(&mut self.rng);
             } else {
-                value_order.swap(i0, i1);
+                if tt == 0 {
+                    deltas.swap(di0, di1);
+                } else {
+                    value_order.swap(i0, i1);
+                }
             }
-            if let Some(values) = self.gen_vals(&value_order) {
+            if let Some(values) = self.gen_vals(&deltas, width, &value_order) {
                 debug_valid_cnt += 1;
-                let temp = self.gen_temp_map(&values, self.l / 5);
+                let temp = self.gen_temp_map(&deltas, width, &values, self.l / 5);
                 let temp_cost = self.calc_temp_cost(temp);
                 if best_temp_cost.chmin(temp_cost) {
                     debug_update_cnt += 1;
                 } else if trans {
-                    value_order.swap(i0, i1);
+                    if tt != 0 {
+                        value_order.swap(i0, i1);
+                    } else {
+                        deltas.swap(di0, di1);
+                    }
                 }
                 invalid_cnt = 0;
             } else {
                 if trans {
-                    value_order.swap(i0, i1);
+                    if tt != 0 {
+                        value_order.swap(i0, i1);
+                    } else {
+                        deltas.swap(di0, di1);
+                    }
                 }
                 invalid_cnt += 1;
             }
             if best_temp_cost.is_none() && invalid_cnt >= 100 {
                 invalid_cnt = 0;
-                self.widen_delta(self.deltas.len() + 1, &mut value_order);
+                width += 1;
+                self.widen_delta(width, &mut value_order);
             }
             if best_temp_cost.is_some() {
                 //&& self.t0.elapsed().as_millis() > 0 {
@@ -3934,15 +3932,15 @@ impl Solver {
 
         // finalize
         eprintln!("{}/{}/{}", debug_update_cnt, debug_valid_cnt, debug_try_cnt);
-        let best_values = if let Some(best_values) = self.gen_vals(&value_order) {
+        let best_values = if let Some(best_values) = self.gen_vals(&deltas, width, &value_order) {
             best_values
         } else {
             vec![0; self.n]
         };
-        let temp = self.gen_temp_map(&best_values, self.l * 2);
+        let temp = self.gen_temp_map(&deltas, width, &best_values, self.l * 2);
         Self::output_temp(temp);
         // question until adjascent temp delta is smaller than sigma
-        let (get_values, meas_mean) = self.measure(&best_values);
+        let (get_values, meas_mean) = self.measure(&deltas, width, &best_values);
         self.answer(best_values, get_values, meas_mean);
     }
 }
