@@ -4376,5 +4376,223 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 
 fn main() {
-    read::<usize>();
+    solver::Solver::new().solve();
+}
+
+mod solver {
+    use super::*;
+    pub struct Solver {
+        t0: Instant,
+        w: usize,
+        d: usize,
+        n: usize,
+        a: Vec<Vec<usize>>,
+        divs: BTreeMap<usize, Vec<(usize, usize)>>,
+    }
+    impl Solver {
+        pub fn new() -> Self {
+            let t0 = Instant::now();
+            let w = read::<usize>();
+            let d = read::<usize>();
+            let n = read::<usize>();
+            let a = read_mat::<usize>(d, n);
+            let mut divs = BTreeMap::new();
+            for a in a.iter() {
+                for &a in a.iter() {
+                    if divs.contains_key(&a) {
+                        continue;
+                    }
+                    let mut col = vec![];
+                    for bh in 1..=w {
+                        let bw = (a + bh - 1) / bh;
+                        if bh > w {
+                            continue;
+                        }
+                        col.push((bw, bh));
+                    }
+                    debug_assert!(!col.is_empty());
+                    col.sort();
+                    divs.insert(a, col);
+                }
+            }
+            Self {
+                t0,
+                w,
+                d,
+                n,
+                a,
+                divs,
+            }
+        }
+        pub fn solve(&self) {
+            let mut ans = vec![];
+            for a in self.a.iter() {
+                for i in 0..self.n {
+                    let Some(rects) = self.pack(i, a) else {continue;};
+                    ans.push(rects);
+                    break;
+                }
+            }
+            Self::answer(ans);
+        }
+        fn answer(rects: Vec<Vec<Rect>>) {
+            for mut rects in rects {
+                rects.sort_by_cached_key(|r| r.area());
+                for rect in rects {
+                    println!("{} {} {} {}", rect.y0, rect.x0, rect.y1, rect.x1);
+                }
+            }
+        }
+        /*
+        fn solve_freeze(&self) {
+            let amaxs = (0..self.n)
+                .map(|i| (0..self.d).map(|di| self.a[di][i]).max().unwrap())
+                .collect::<Vec<_>>();
+        }
+         */
+        fn pack(&self, ini: usize, areas: &[usize]) -> Option<Vec<Rect>> {
+            let mut rects = vec![];
+            let mut rem = (1usize << areas.len()) - 1;
+            let mut tetris = Tetris::new(self.w, self.w);
+            // initialize
+            {
+                rem &= !(1usize << ini);
+                let a = areas[ini];
+                for &(bh, bw) in self.divs[&a].iter() {
+                    let Some((_, (y0, x0))) = tetris.eval(bh, bw) else {continue;};
+                    tetris.add(bh, bw, x0);
+                    rects.push(Rect::new(y0, x0, bh, bw));
+                    break;
+                }
+            }
+            // construct all
+            while rem != 0 {
+                let mut cost = None;
+                for (ai, &a) in areas
+                    .iter()
+                    .enumerate()
+                    .filter(|(ai, _a)| ((rem >> ai) & 1) == 1)
+                {
+                    for &(bh, bw) in self.divs[&a].iter() {
+                        let Some(c) = tetris.eval(bh, bw) else {continue;};
+                        cost.chmin((c, ai, bw));
+                    }
+                }
+                let Some(((_, (ny0, nx0)), nai, nbw)) = cost else {return None;};
+                let nbh = areas[nai] / nbw;
+                tetris.add(nbh, nbw, nx0);
+                rem &= !(1usize << nai);
+                rects.push(Rect::new(ny0, nx0, nbh, nbw));
+            }
+            Some(rects)
+        }
+    }
+    pub struct Rect {
+        y0: usize,
+        x0: usize,
+        y1: usize,
+        x1: usize,
+    }
+    impl Rect {
+        fn new(y0: usize, x0: usize, h: usize, w: usize) -> Self {
+            Self {
+                y0,
+                x0,
+                y1: y0 + h,
+                x1: x0 + w,
+            }
+        }
+        fn area(&self) -> usize {
+            (self.y1 - self.y0) * (self.x1 - self.x0)
+        }
+    }
+    /*
+    struct Partition {
+        vs: BTreeMap<usize, Vec<usize>>,
+        hs: BTreeMap<usize, Vec<usize>>,
+    }
+    */
+    mod tetris {
+        use super::super::*;
+        #[derive(Clone, Copy)]
+        struct Block {
+            sm: usize,
+            mx: usize,
+            sz: usize,
+        }
+        impl Block {
+            fn new() -> Self {
+                Self {
+                    sm: 0,
+                    mx: 0,
+                    sz: 1,
+                }
+            }
+        }
+        pub struct Tetris {
+            seg: LazySegmentTree<Block, usize>,
+            x0_cands: BTreeSet<usize>,
+            h: usize,
+            w: usize,
+        }
+        impl Tetris {
+            pub fn new(h: usize, w: usize) -> Self {
+                let mut x0_cands = BTreeSet::new();
+                x0_cands.insert(0);
+                Self {
+                    seg: LazySegmentTree::<Block, usize>::new(
+                        w,
+                        |x, y| -> Block {
+                            Block {
+                                sm: x.sm + y.sm,
+                                mx: max(x.mx, y.mx),
+                                sz: x.sz + y.sz,
+                            }
+                        },
+                        |b, h| -> Block {
+                            debug_assert!(b.sz * h >= b.sm);
+                            Block {
+                                sm: b.sz * h,
+                                mx: h,
+                                sz: b.sz,
+                            }
+                        },
+                        max,
+                        Block::new(),
+                    ),
+                    x0_cands,
+                    h,
+                    w,
+                }
+            }
+            pub fn eval(
+                &mut self,
+                bh: usize,
+                bw: usize,
+            ) -> Option<((usize, usize), (usize, usize))> {
+                let mut cost = None;
+                for &x0 in self.x0_cands.iter() {
+                    if x0 + bw > self.w {
+                        continue;
+                    }
+                    let blk = self.seg.query(x0, x0 + bw - 1);
+                    let y0 = blk.mx;
+                    let npeak = y0 + bh;
+                    if npeak > self.h {
+                        continue;
+                    }
+                    let lower_empty = blk.mx * bw - blk.sm;
+                    cost.chmin(((lower_empty, npeak), (y0, x0)));
+                }
+                cost
+            }
+            pub fn add(&mut self, bh: usize, bw: usize, x0: usize) {
+                self.x0_cands.insert(x0);
+                self.x0_cands.insert(x0 + bw);
+                let npeak = self.seg.query(x0, x0 + bw - 1).mx + bh;
+                self.seg.reserve(x0, x0 + bw + 1, npeak);
+            }
+        }
+    }
+    use tetris::Tetris;
 }
