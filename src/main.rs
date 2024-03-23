@@ -4475,11 +4475,10 @@ mod solver {
                 {
                     for &(bh, bw) in self.divs[&a].iter() {
                         let Some(c) = tetris.eval(bh, bw) else {continue;};
-                        cost.chmin((c, ai, bw));
+                        cost.chmin((c, ai, bh, bw));
                     }
                 }
-                let Some(((_, (ny0, nx0)), nai, nbw)) = cost else {return None;};
-                let nbh = areas[nai] / nbw;
+                let Some(((_, (ny0, nx0)), nai, nbh, nbw)) = cost else {return None;};
                 tetris.add(nbh, nbw, nx0);
                 rem &= !(1usize << nai);
                 rects.push(Rect::new(ny0, nx0, nbh, nbw));
