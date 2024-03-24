@@ -4381,6 +4381,32 @@ fn main() {
 
 mod solver {
     use super::*;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct Rect {
+        y0: usize,
+        x0: usize,
+        y1: usize,
+        x1: usize,
+    }
+    impl Rect {
+        fn new_empty() -> Self {
+            Self {
+                y0: 0,
+                x0: 0,
+                y1: 0,
+                x1: 0,
+            }
+        }
+        fn new(y0: usize, x0: usize, y1: usize, x1: usize) -> Self {
+            debug_assert!(y0 <= y1);
+            debug_assert!(x0 <= x1);
+            Self { y0, x0, y1, x1 }
+        }
+        fn area(&self) -> usize {
+            (self.y1 - self.y0) * (self.x1 - self.x0)
+        }
+    }
     pub struct Solver {
         t0: Instant,
         w: usize,
@@ -4403,15 +4429,27 @@ mod solver {
                         continue;
                     }
                     let mut col = vec![];
-                    for bh in 1..=w {
+                    for bh in (1..=w).take_while(|&bh| bh * bh <= a) {
                         let bw = (a + bh - 1) / bh;
-                        if bh > w {
+                        if bw > w {
                             continue;
                         }
+                        col.push((bh, bw));
                         col.push((bw, bh));
                     }
                     debug_assert!(!col.is_empty());
                     col.sort();
+                    const COL_LIM: usize = 50;
+                    if col.len() > COL_LIM {
+                        let mut ncol = vec![];
+                        let delta = (col.len() - 1) as f64 / (COL_LIM - 1) as f64;
+                        let mut fi = 0.0;
+                        for _ in 0..COL_LIM {
+                            ncol.push(col[fi as usize]);
+                            fi += delta;
+                        }
+                        col = ncol;
+                    }
                     divs.insert(a, col);
                 }
             }
@@ -4425,13 +4463,27 @@ mod solver {
             }
         }
         pub fn solve(&self) {
+            if self.frozen_solve() {
+                return;
+            }
             let mut ans = vec![];
             for a in self.a.iter() {
-                for i in 0..self.n {
-                    let Some(rects) = self.pack(i, a) else {continue;};
-                    ans.push(rects);
-                    break;
+                let asum = a.iter().sum::<usize>() as f64;
+                let na = a
+                    .iter()
+                    .map(|&a| max(1, ((a as f64 / asum) * self.w as f64) as usize))
+                    .collect::<Vec<_>>();
+                let mut y = 0;
+                let mut rects = vec![];
+                for na in na {
+                    let y0 = y;
+                    let y1 = y0 + na;
+                    let x0 = 0;
+                    let x1 = self.w;
+                    rects.push(Rect::new(y0, x0, y1, x1));
+                    y = y1;
                 }
+                ans.push(rects);
             }
             Self::answer(ans);
         }
@@ -4443,6 +4495,15 @@ mod solver {
                 }
             }
         }
+        fn frozen_solve(&self) -> bool {
+            let amax = (0..self.n)
+                .map(|i| (0..self.d).map(|di| self.a[di][i]).max().unwrap())
+                .collect::<Vec<_>>();
+            let Some(rects) = self.frozen_pack(&amax) else {return false;};
+            let ans = (0..self.d).map(|_| rects.clone()).collect::<Vec<_>>();
+            Self::answer(ans);
+            true
+        }
         /*
         fn solve_freeze(&self) {
             let amaxs = (0..self.n)
@@ -4450,22 +4511,10 @@ mod solver {
                 .collect::<Vec<_>>();
         }
          */
-        fn pack(&self, ini: usize, areas: &[usize]) -> Option<Vec<Rect>> {
-            let mut rects = vec![];
-            let mut rem = (1usize << areas.len()) - 1;
+        fn frozen_pack(&self, areas: &[usize]) -> Option<Vec<Rect>> {
+            let mut rects = vec![Rect::new_empty(); self.n];
+            let mut rem = (1usize << self.n) - 1;
             let mut tetris = Tetris::new(self.w, self.w);
-            // initialize
-            {
-                rem &= !(1usize << ini);
-                let a = areas[ini];
-                for &(bh, bw) in self.divs[&a].iter() {
-                    let Some((_, (y0, x0))) = tetris.eval(bh, bw) else {continue;};
-                    tetris.add(bh, bw, x0);
-                    rects.push(Rect::new(y0, x0, bh, bw));
-                    break;
-                }
-            }
-            // construct all
             while rem != 0 {
                 let mut cost = None;
                 for (ai, &a) in areas
@@ -4474,35 +4523,23 @@ mod solver {
                     .filter(|(ai, _a)| ((rem >> ai) & 1) == 1)
                 {
                     for &(bh, bw) in self.divs[&a].iter() {
-                        let Some(c) = tetris.eval(bh, bw) else {continue;};
-                        cost.chmin((c, ai, bh, bw));
+                        if (ai, bh, bw, a) == (34, 87, 991, 86140) {
+                            if rects[32] != Rect::new_empty() {
+                                debug!();
+                            }
+                        }
+                        let Some((c, (y0, x0))) = tetris.eval(bh, bw, a) else {return None;};
+                        cost.chmin((c, (ai, y0, x0, bh, bw)));
                     }
                 }
-                let Some(((_, (ny0, nx0)), nai, nbh, nbw)) = cost else {return None;};
+                let (_, (nai, ny0, nx0, nbh, nbw)) = cost.unwrap();
+                let nbh = min(ny0 + nbh, self.w) - ny0;
+                let nbw = min(nx0 + nbw, self.w) - nx0;
                 tetris.add(nbh, nbw, nx0);
                 rem &= !(1usize << nai);
-                rects.push(Rect::new(ny0, nx0, nbh, nbw));
+                rects[nai] = Rect::new(ny0, nx0, ny0 + nbh, nx0 + nbw);
             }
             Some(rects)
-        }
-    }
-    pub struct Rect {
-        y0: usize,
-        x0: usize,
-        y1: usize,
-        x1: usize,
-    }
-    impl Rect {
-        fn new(y0: usize, x0: usize, h: usize, w: usize) -> Self {
-            Self {
-                y0,
-                x0,
-                y1: y0 + h,
-                x1: x0 + w,
-            }
-        }
-        fn area(&self) -> usize {
-            (self.y1 - self.y0) * (self.x1 - self.x0)
         }
     }
     /*
@@ -4513,7 +4550,7 @@ mod solver {
     */
     mod tetris {
         use super::super::*;
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         struct Block {
             sm: usize,
             mx: usize,
@@ -4531,6 +4568,7 @@ mod solver {
         pub struct Tetris {
             seg: LazySegmentTree<Block, usize>,
             x0_cands: BTreeSet<usize>,
+            x1_cands: BTreeSet<usize>,
             h: usize,
             w: usize,
         }
@@ -4538,6 +4576,8 @@ mod solver {
             pub fn new(h: usize, w: usize) -> Self {
                 let mut x0_cands = BTreeSet::new();
                 x0_cands.insert(0);
+                let mut x1_cands = BTreeSet::new();
+                x1_cands.insert(w);
                 Self {
                     seg: LazySegmentTree::<Block, usize>::new(
                         w,
@@ -4560,35 +4600,51 @@ mod solver {
                         Block::new(),
                     ),
                     x0_cands,
+                    x1_cands,
                     h,
                     w,
                 }
             }
+            // over, impossible empty, height
             pub fn eval(
                 &mut self,
-                bh: usize,
-                bw: usize,
-            ) -> Option<((usize, usize), (usize, usize))> {
+                bh0: usize,
+                bw0: usize,
+                a: usize,
+            ) -> Option<((usize, usize, usize), (usize, usize))> {
                 let mut cost = None;
-                for &x0 in self.x0_cands.iter() {
-                    if x0 + bw > self.w {
+                let mut x0_seen = BTreeSet::new();
+                for x0 in self
+                    .x0_cands
+                    .iter()
+                    .copied()
+                    .chain(self.x1_cands.iter().map(|&x1| x1.saturating_sub(bw0)))
+                {
+                    if !x0_seen.insert(x0) {
+                        continue;
+                    }
+                    let bw = min(x0 + bw0, self.w) - x0;
+                    if bw == 0 {
                         continue;
                     }
                     let blk = self.seg.query(x0, x0 + bw - 1);
                     let y0 = blk.mx;
-                    let npeak = y0 + bh;
-                    if npeak > self.h {
+                    let bh = min(y0 + bh0, self.h) - y0;
+                    if bh == 0 {
                         continue;
                     }
+                    let npeak = y0 + bh;
                     let lower_empty = blk.mx * bw - blk.sm;
-                    cost.chmin(((lower_empty, npeak), (y0, x0)));
+                    cost.chmin(((a.saturating_sub(bh * bw), lower_empty, npeak), (y0, x0)));
                 }
                 cost
             }
             pub fn add(&mut self, bh: usize, bw: usize, x0: usize) {
+                debug_assert!(x0 + bw <= self.w);
                 self.x0_cands.insert(x0);
                 self.x0_cands.insert(x0 + bw);
                 let npeak = self.seg.query(x0, x0 + bw - 1).mx + bh;
+                debug_assert!(npeak <= self.h);
                 self.seg.reserve(x0, x0 + bw + 1, npeak);
             }
         }
