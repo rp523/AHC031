@@ -4382,6 +4382,10 @@ fn main() {
 mod solver {
     use super::*;
 
+    const LEFT: usize = 0;
+    const RIGHT: usize = 1;
+    const LOWER: usize = 2;
+    const UPPER: usize = 3;
     mod rect {
         use super::*;
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4466,6 +4470,7 @@ mod solver {
         d: usize,
         n: usize,
         a: Vec<Vec<usize>>,
+        divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
     impl Solver {
         pub fn new() -> Self {
@@ -4474,9 +4479,161 @@ mod solver {
             let d = read::<usize>();
             let n = read::<usize>();
             let a = read_mat::<usize>(d, n);
-            Self { t0, w, d, n, a }
+            let divs = a
+                .iter()
+                .map(|a| {
+                    a.iter()
+                        .map(|&a| {
+                            let mut hws = vec![];
+                            for (y, x) in (1..=w)
+                                .take_while(|&y| y * y <= a)
+                                .map(|y| (y, (a + y - 1) / y))
+                                .filter(|&(_y, x)| x <= w)
+                            {
+                                hws.push((y, x));
+                                if y != x {
+                                    hws.push((x, y));
+                                }
+                            }
+                            hws.sort();
+                            hws
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            Self {
+                t0,
+                w,
+                d,
+                n,
+                a,
+                divs,
+            }
+        }
+        fn pyramid(&self, _a: &[usize], divs: &[Vec<(usize, usize)>]) -> Vec<Rect> {
+            let mut right_y0x0 = BTreeMap::new();
+            let mut rects = vec![];
+            let mut rems = vec![];
+            // from right top
+            {
+                let mut y1 = self.w;
+                let mut lim_bw = self.w;
+                for divs in divs.iter().rev() {
+                    // from big to small
+                    let mut ok = false;
+                    for &(bh, bw) in divs.iter().filter(|&&(_bh, bw)| bw <= lim_bw) {
+                        if y1 < bh {
+                            continue;
+                        }
+                        let y0 = y1 - bh;
+                        let x1 = self.w; // fixed
+                        let x0 = x1 - bw;
+                        let rect = Rect::new(y0, x0, y1, x1);
+                        debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
+                        debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
+                        debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
+                        debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                        rects.push(rect);
+                        right_y0x0.insert(y0, x0);
+                        lim_bw.chmin(bw);
+                        if rems.is_empty() {
+                            rems.push((y1, x0, RIGHT));
+                        }
+                        rems.push((y0, x0, RIGHT));
+                        ok = true;
+                        y1 = y0;
+                        break;
+                    }
+                    if !ok {
+                        break;
+                    }
+                }
+                if !right_y0x0.contains_key(&0) {
+                    right_y0x0.insert(0, self.w);
+                }
+            }
+            let right_y0x0 = right_y0x0;
+            // from left bottom
+            if rects.len() < divs.len() {
+                {
+                    let mut y0 = 0;
+                    for divs in divs.iter().rev().skip(rects.len()) {
+                        let mut ok = false;
+                        for &(bh, bw) in divs.iter() {
+                            let y1 = y0 + bh;
+                            if y1 > self.w {
+                                break;
+                            }
+                            let x0 = 0; // fixed
+                            let x1 = bw;
+                            let (_, &lim_x1) = right_y0x0.less_than(&y1).unwrap();
+                            if lim_x1 < x1 {
+                                continue;
+                            }
+                            let rect = Rect::new(y0, x0, y1, x1);
+                            debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
+                            debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
+                            debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
+                            debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                            rects.push(rect);
+                            rems.push((y0, x1, LEFT));
+                            ok = true;
+                            y0 = y1;
+                            break;
+                        }
+                        if !ok {
+                            break;
+                        }
+                    }
+                    if y0 < self.w {
+                        rems.push((y0, 0, LEFT));
+                    }
+                }
+                let mut cands = vec![];
+                // ascending order from last
+                rems.sort_by_cached_key(|(y, _x, _lr)| Reverse(*y));
+                let mut x0 = 0;
+                let mut x1 = self.w;
+                let mut y0 = 0;
+                while let Some((y1, x, lr)) = rems.pop() {
+                    let dh = y1 - y0;
+                    let dw = x1 - x0;
+                    if dh > 0 && dw > 0 {
+                        cands.push(Rect::new(y0, x0, y1, x1));
+                        if cands.len() >= divs.len() {
+                            break;
+                        }
+                    }
+                    if lr == LEFT {
+                        x0 = x;
+                    } else if lr == RIGHT {
+                        x1 = x;
+                    } else {
+                        unreachable!()
+                    }
+                    y0 = y1;
+                }
+                cands.sort_by_cached_key(|rect| rect.area());
+                for rect in cands.iter().rev().take(divs.len() - rects.len()) {
+                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
+                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
+                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
+                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                    rects.push(rect.clone());
+                }
+            }
+            debug_assert!(rects.len() == divs.len());
+            rects
         }
         pub fn solve(&self) {
+            let mut ans = vec![];
+            for (a, divs) in self.a.iter().zip(self.divs.iter()) {
+                let rects = self.pyramid(a, divs);
+                ans.push(rects);
+            }
+            self.answer(ans);
+        }
+        pub fn solve_expand(&self) {
             let mut rand = XorShift64::new();
             let mut costs = vec![];
             let mut state = vec![];
@@ -4533,12 +4690,16 @@ mod solver {
                     break;
                 }
             }
-            Self::answer(state);
+            self.answer(state);
         }
-        fn answer(rects: Vec<Vec<Rect>>) {
+        fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
                 rects.sort_by_cached_key(|r| r.area());
                 for rect in rects {
+                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
+                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
+                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
+                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
                     println!("{} {} {} {}", rect.y0, rect.x0, rect.y1, rect.x1);
                 }
             }
@@ -4566,10 +4727,6 @@ mod solver {
                     que.push((cost, ri));
                 }
             }
-            const LEFT: usize = 0;
-            const RIGHT: usize = 1;
-            const LOWER: usize = 2;
-            const UPPER: usize = 3;
             while let Some((_cost, ri)) = que.pop() {
                 let rect = &rects[ri];
                 let mut mind = vec![None; 4];
