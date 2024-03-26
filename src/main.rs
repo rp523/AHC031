@@ -4510,187 +4510,15 @@ mod solver {
                 divs,
             }
         }
-        fn pyramid(&self, _a: &[usize], divs: &[Vec<(usize, usize)>]) -> Vec<Rect> {
-            let mut right_y0x0 = BTreeMap::new();
-            let mut rects = vec![];
-            let mut rems = vec![];
-            // from right top
-            {
-                let mut y1 = self.w;
-                let mut lim_bw = self.w;
-                for divs in divs.iter().rev() {
-                    // from big to small
-                    let mut ok = false;
-                    for &(bh, bw) in divs.iter().filter(|&&(_bh, bw)| bw <= lim_bw) {
-                        if y1 < bh {
-                            continue;
-                        }
-                        let y0 = y1 - bh;
-                        let x1 = self.w; // fixed
-                        let x0 = x1 - bw;
-                        let rect = Rect::new(y0, x0, y1, x1);
-                        debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                        debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                        debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                        debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                        rects.push(rect);
-                        right_y0x0.insert(y0, x0);
-                        lim_bw.chmin(bw);
-                        if rems.is_empty() {
-                            rems.push((y1, x0, RIGHT));
-                        }
-                        rems.push((y0, x0, RIGHT));
-                        ok = true;
-                        y1 = y0;
-                        break;
-                    }
-                    if !ok {
-                        break;
-                    }
-                }
-                if !right_y0x0.contains_key(&0) {
-                    right_y0x0.insert(0, self.w);
-                }
-            }
-            let right_y0x0 = right_y0x0;
-            // from left bottom
-            if rects.len() < divs.len() {
-                {
-                    let mut y0 = 0;
-                    for divs in divs.iter().rev().skip(rects.len()) {
-                        let mut ok = false;
-                        for &(bh, bw) in divs.iter() {
-                            let y1 = y0 + bh;
-                            if y1 > self.w {
-                                break;
-                            }
-                            let x0 = 0; // fixed
-                            let x1 = bw;
-                            let (_, &lim_x1) = right_y0x0.less_than(&y1).unwrap();
-                            if lim_x1 < x1 {
-                                continue;
-                            }
-                            let rect = Rect::new(y0, x0, y1, x1);
-                            debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                            debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                            debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                            debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                            rects.push(rect);
-                            rems.push((y0, x1, LEFT));
-                            ok = true;
-                            y0 = y1;
-                            break;
-                        }
-                        if !ok {
-                            break;
-                        }
-                    }
-                    if y0 < self.w {
-                        rems.push((y0, 0, LEFT));
-                    }
-                }
-                let mut cands = vec![];
-                // ascending order from last
-                rems.sort_by_cached_key(|(y, _x, _lr)| Reverse(*y));
-                let mut x0 = 0;
-                let mut x1 = self.w;
-                let mut y0 = 0;
-                while let Some((y1, x, lr)) = rems.pop() {
-                    let dh = y1 - y0;
-                    let dw = x1 - x0;
-                    if dh > 0 && dw > 0 {
-                        cands.push(Rect::new(y0, x0, y1, x1));
-                        if cands.len() >= divs.len() {
-                            break;
-                        }
-                    }
-                    if lr == LEFT {
-                        x0 = x;
-                    } else if lr == RIGHT {
-                        x1 = x;
-                    } else {
-                        unreachable!()
-                    }
-                    y0 = y1;
-                }
-                cands.sort_by_cached_key(|rect| rect.area());
-                for rect in cands.iter().rev().take(divs.len() - rects.len()) {
-                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                    rects.push(rect.clone());
-                }
-            }
-            debug_assert!(rects.len() == divs.len());
-            rects
-        }
         pub fn solve(&self) {
             let mut ans = vec![];
-            for (a, divs) in self.a.iter().zip(self.divs.iter()) {
-                let rects = self.pyramid(a, divs);
+            let mut rand = XorShift64::new();
+            for (di, a) in self.a.iter().enumerate() {
+                let lim_t = ((di + 1) * 2000 / self.d) as u128;
+                let rects = self.particle_sim(a, &mut rand, lim_t);
                 ans.push(rects);
             }
             self.answer(ans);
-        }
-        pub fn solve_expand(&self) {
-            let mut rand = XorShift64::new();
-            let mut costs = vec![];
-            let mut state = vec![];
-            for a in self.a.iter() {
-                let mut ah = a
-                    .iter()
-                    .map(|&a| (a + self.w - 1) / self.w)
-                    .collect::<Vec<_>>();
-                let ah_sum = ah.iter().sum::<usize>();
-                let mut ovr = ah_sum.saturating_sub(self.w);
-                for ah in ah.iter_mut() {
-                    let del_cap = *ah - 1;
-                    if ovr > 0 {
-                        let del = min(del_cap, ovr);
-                        *ah -= del;
-                        ovr -= del;
-                    }
-                }
-                let na = ah;
-                let mut y = 0;
-                let mut rects = vec![];
-                let mut cost = 0;
-                for (na, a) in na.into_iter().zip(a.iter()) {
-                    let y0 = y;
-                    let y1 = y0 + na;
-                    let x0 = 0;
-                    let x1 = self.w;
-                    let rect = Rect::new(y0, x0, y1, x1);
-                    cost += 100 * a.saturating_sub(rect.area());
-                    rects.push(rect);
-                    y = y1;
-                }
-                costs.push(cost);
-                state.push(rects);
-            }
-            //costs.iter_mut().for_each(|cost| *cost = 1usize << 60);
-            const LIMIT_TIME: u128 = 2000;
-            //return Self::answer(state);
-            while self.t0.elapsed().as_millis() < LIMIT_TIME {
-                let mut all_cost_zero = true;
-                for (a, (cost, rects)) in self.a.iter().zip(costs.iter_mut().zip(state.iter_mut()))
-                {
-                    if cost == &0 {
-                        continue;
-                    } else {
-                        all_cost_zero = false;
-                    }
-                    let (cost1, rects1) = self.expand_gen(a, &mut rand);
-                    if cost.chmin(cost1) {
-                        *rects = rects1;
-                    }
-                }
-                if all_cost_zero {
-                    break;
-                }
-            }
-            self.answer(state);
         }
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
@@ -4704,115 +4532,208 @@ mod solver {
                 }
             }
         }
-        fn expand_gen(&self, a: &[usize], rand: &mut XorShift64) -> (usize, Vec<Rect>) {
-            let mut seeds = vec![];
-            let rdelta = 0.5 * self.w as f64 / self.n as f64;
-            let yc = 0.5 * self.w as f64;
-            let xc = 0.5 * self.w as f64;
-            for i in 0..self.n {
-                let r = rdelta * i as f64;
-                let theta = rand.next_f64() * 2.0 * std::f64::consts::PI;
-                let y = ((yc + r * theta.sin()) as usize).clamp(0, self.w - 1);
-                let x = ((xc + r * theta.cos()) as usize).clamp(0, self.w - 1);
-                seeds.push((y, x))
-            }
-            let mut rects = seeds
-                .into_iter()
-                .map(|(y, x)| Rect::from_point(y, x))
-                .collect::<Vec<_>>();
-            let mut que = BinaryHeap::new();
-            for (ri, (&a, rect)) in a.iter().zip(rects.iter()).enumerate() {
-                let cost = 100 * a.saturating_sub(rect.area());
-                if cost > 0 {
-                    que.push((cost, ri));
+        fn particle_sim(&self, a: &[usize], rand: &mut XorShift64, lim_t: u128) -> Vec<Rect> {
+            let a = a.iter().map(|&a| a as f64).collect::<Vec<_>>();
+            mod particle {
+                use super::*;
+                #[derive(Clone, Copy)]
+                pub struct Particle {
+                    yc: f64,
+                    xc: f64,
+                    h: f64,
+                    w: f64,
+                    pub y0: f64,
+                    pub x0: f64,
+                    pub y1: f64,
+                    pub x1: f64,
+                    pub ny0: f64,
+                    pub nx0: f64,
+                    pub ny1: f64,
+                    pub nx1: f64,
+                    sz: f64,
                 }
-            }
-            while let Some((_cost, ri)) = que.pop() {
-                let rect = &rects[ri];
-                let mut mind = vec![None; 4];
-                for (_nri, nrect) in rects.iter().enumerate().filter(|(nri, _nrect)| &ri != nri) {
-                    if let Some(d) = rect.left_dist(nrect) {
-                        mind[LEFT].chmin(d);
-                    }
-                    if let Some(d) = rect.right_dist(nrect) {
-                        mind[RIGHT].chmin(d);
-                    }
-                    if let Some(d) = rect.lower_dist(nrect) {
-                        mind[LOWER].chmin(d);
-                    }
-                    if let Some(d) = rect.upper_dist(nrect) {
-                        mind[UPPER].chmin(d);
-                    }
-                }
-                let mut ndir = None;
-                // to frame
-                {
-                    let mut ev = None;
-                    for (di, mind) in mind.iter().enumerate() {
-                        if mind.is_some() {
-                            continue;
-                        }
-                        let d = match di {
-                            LEFT => rect.x0,
-                            RIGHT => self.w - rect.x1,
-                            LOWER => rect.y0,
-                            UPPER => self.w - rect.y1,
-                            _ => unreachable!(),
+                impl Particle {
+                    pub fn new(y: usize, x: usize, sz: usize) -> Self {
+                        let mut slf = Self {
+                            yc: y as f64 + 0.5,
+                            xc: x as f64 + 0.5,
+                            h: 1.0,
+                            w: 1.0,
+                            y0: 0.0,
+                            x0: 0.0,
+                            y1: 0.0,
+                            x1: 0.0,
+                            ny0: 0.0,
+                            nx0: 0.0,
+                            ny1: 0.0,
+                            nx1: 0.0,
+                            sz: sz as f64,
                         };
-                        if d == 0 {
-                            continue;
-                        }
-                        if ev.chmin(d) {
-                            ndir = Some((di, d));
-                        }
+                        slf.propagate();
+                        slf
                     }
-                }
-                if ndir.is_none() {
-                    let mut ev = None;
-                    for (di, mind) in mind.into_iter().enumerate() {
-                        let Some(mind) = mind else {continue;};
-                        if mind == 0 {
-                            continue;
-                        }
-                        if ev.chmax(mind) {
-                            ndir = Some((di, mind));
-                        }
+                    fn propagate(&mut self) {
+                        self.y0 = (self.yc - 0.5 * self.h).floor().clamp(0.0, self.sz);
+                        self.y1 = (self.yc + 0.5 * self.h).ceil().clamp(0.0, self.sz);
+                        self.x0 = (self.xc - 0.5 * self.w).floor().clamp(0.0, self.sz);
+                        self.x1 = (self.xc + 0.5 * self.w).ceil().clamp(0.0, self.sz);
+                        self.ny0 = (self.y0 - 1.0).clamp(0.0, self.sz);
+                        self.ny1 = (self.y1 + 1.0).clamp(0.0, self.sz);
+                        self.nx0 = (self.x0 - 1.0).clamp(0.0, self.sz);
+                        self.nx1 = (self.x1 + 1.0).clamp(0.0, self.sz);
                     }
-                }
-                let Some((ndir, mind)) = ndir else {continue;};
-                let rect = &mut rects[ri];
-                let h = rect.y1 - rect.y0;
-                let w = rect.x1 - rect.x0;
-                match ndir {
-                    LEFT => {
-                        let lim = (a[ri] + h - 1) / h - w;
-                        rect.x0 -= min(mind, lim);
+                    pub fn update(&mut self, push_yc: f64, push_xc: f64, push_h: f64, push_w: f64) {
+                        self.yc = (self.yc + push_yc).clamp(0.0, self.sz);
+                        self.xc = (self.xc + push_xc).clamp(0.0, self.sz);
+                        self.h = (self.h + push_h).clamp(1.0, self.sz);
+                        self.w = (self.w + push_w).clamp(1.0, self.sz);
+                        self.propagate();
                     }
-                    RIGHT => {
-                        let lim = (a[ri] + h - 1) / h - w;
-                        rect.x1 += min(mind, lim);
+                    #[inline(always)]
+                    pub fn area(&self) -> f64 {
+                        let h = self.y1 - self.y0;
+                        let w = self.x1 - self.x0;
+                        h * w
                     }
-                    LOWER => {
-                        let lim = (a[ri] + w - 1) / w - h;
-                        rect.y0 -= min(mind, lim);
-                    }
-                    UPPER => {
-                        let lim = (a[ri] + w - 1) / w - h;
-                        rect.y1 += min(mind, lim);
-                    }
-                    _ => unreachable!(),
-                }
-                let rem_cost = a[ri].saturating_sub(rect.area());
-                if rem_cost > 0 {
-                    que.push((rem_cost, ri));
                 }
             }
-            let cost = a
-                .iter()
-                .zip(rects.iter())
-                .map(|(&a, rect)| 100 * a.saturating_sub(rect.area()))
-                .sum::<usize>();
-            (cost, rects)
+            use particle::Particle;
+            let mut min_cost = None;
+            let mut min_cost_rects = vec![];
+            'trial: loop {
+                let mut particles = {
+                    let mut seeds = BTreeSet::new();
+                    let mut particles = vec![];
+                    while seeds.len() < self.n {
+                        let y = rand.next_usize() % self.w;
+                        let x = rand.next_usize() % self.w;
+                        if seeds.insert((y, x)) {
+                            particles.push(Particle::new(y, x, self.w));
+                        }
+                    }
+                    particles
+                };
+                for li in 0.. {
+                    let mut area_upd = false;
+                    let mut overlap_upd = false;
+                    let mut cost = 0.0;
+                    let mut push_yc = vec![0.0; self.n];
+                    let mut push_xc = vec![0.0; self.n];
+                    let mut push_h = vec![0.0; self.n];
+                    let mut push_w = vec![0.0; self.n];
+                    for i0 in 0..self.n {
+                        let p0 = &particles[i0];
+                        let yc0 = 0.5 * (p0.y0 + p0.y1);
+                        let xc0 = 0.5 * (p0.x0 + p0.x1);
+                        // area
+                        if p0.area() < a[i0] {
+                            area_upd = true;
+                            let h = p0.y1 - p0.y0;
+                            let w = p0.x1 - p0.x0;
+                            push_h[i0] += a[i0] * 100.0 * w / (h + w);
+                            push_w[i0] += a[i0] * 100.0 * h / (h + w);
+                            cost += (a[i0] - p0.area()) * 100.0;
+                        }
+                        for i1 in (0..self.n).skip(i0 + 1) {
+                            let p1 = &particles[i1];
+                            let yc1 = 0.5 * (p1.ny0 + p1.ny1);
+                            let xc1 = 0.5 * (p1.nx0 + p1.nx1);
+                            // overlap
+                            if p0.nx0 < p1.nx1
+                                && p1.nx0 < p0.nx1
+                                && p0.ny0 < p1.ny1
+                                && p1.ny0 < p0.ny1
+                            {
+                                overlap_upd = true;
+                                let and_ny0 = if p0.ny0 > p1.ny0 { p0.ny0 } else { p1.ny0 };
+                                let and_ny1 = if p0.ny1 < p1.ny1 { p0.ny1 } else { p1.ny1 };
+                                let and_nx0 = if p0.nx0 > p1.nx0 { p0.nx0 } else { p1.nx0 };
+                                let and_nx1 = if p0.nx1 < p1.nx1 { p0.nx1 } else { p1.nx1 };
+                                let and_h = and_ny1 - and_ny0;
+                                let and_w = and_nx1 - and_nx0;
+                                let (dy, dx) = if and_h > and_w {
+                                    (0.0, 1.0)
+                                } else {
+                                    (1.0, 0.0)
+                                };
+                                let force = (self.w * self.w) as f64 * 100.0;
+                                if yc0 < yc1 {
+                                    push_yc[i0] -= force * dy;
+                                    push_h[i0] -= force * dy * 0.5;
+                                    push_yc[i1] += force * dy;
+                                    push_h[i1] -= force * dy * 0.5;
+                                } else {
+                                    push_yc[i0] += force * dy;
+                                    push_h[i0] -= force * dy * 0.5;
+                                    push_yc[i1] -= force * dy;
+                                    push_h[i1] -= force * dy * 0.5;
+                                }
+                                if xc0 < xc1 {
+                                    push_xc[i0] -= force * dx;
+                                    push_w[i0] -= force * dx * 0.5;
+                                    push_xc[i1] += force * dx;
+                                    push_w[i1] += force * dx * 0.5;
+                                } else {
+                                    push_xc[i0] += force * dx;
+                                    push_w[i0] -= force * dx * 0.5;
+                                    push_xc[i1] -= force * dx;
+                                    push_w[i1] -= force * dx * 0.5;
+                                }
+                            }
+                        }
+                    }
+                    if !overlap_upd && min_cost.chmin(cost) {
+                        min_cost_rects = particles
+                            .iter()
+                            .map(|p| {
+                                Rect::new(
+                                    p.y0 as usize,
+                                    p.x0 as usize,
+                                    p.y1 as usize,
+                                    p.x1 as usize,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                    }
+                    if !area_upd && !overlap_upd {
+                        return min_cost_rects;
+                    } else if self.t0.elapsed().as_millis() > lim_t && !min_cost_rects.is_empty() {
+                        return min_cost_rects;
+                    }
+                    if li > 10000 {
+                        continue 'trial;
+                    }
+                    let mut grad_abs_max = 0.0;
+                    push_yc.iter().for_each(|&x| {
+                        grad_abs_max.chmax(x.abs());
+                    });
+                    push_xc.iter().for_each(|&x| {
+                        grad_abs_max.chmax(x.abs());
+                    });
+                    push_h.iter().for_each(|&x| {
+                        grad_abs_max.chmax(x.abs());
+                    });
+                    push_w.iter().for_each(|&x| {
+                        grad_abs_max.chmax(x.abs());
+                    });
+                    const CORR_GRAD_MAX: f64 = 0.5;
+                    if grad_abs_max > CORR_GRAD_MAX {
+                        let corr = CORR_GRAD_MAX / grad_abs_max;
+                        push_yc.iter_mut().for_each(|x| *x *= corr);
+                        push_xc.iter_mut().for_each(|x| *x *= corr);
+                        push_h.iter_mut().for_each(|x| *x *= corr);
+                        push_w.iter_mut().for_each(|x| *x *= corr);
+                    }
+                    for (p, ((yc, xc), (h, w))) in particles.iter_mut().zip(
+                        push_yc
+                            .into_iter()
+                            .zip(push_xc.into_iter())
+                            .zip(push_h.into_iter().zip(push_w.into_iter())),
+                    ) {
+                        p.update(yc, xc, h, w);
+                    }
+                }
+            }
         }
     }
 }
