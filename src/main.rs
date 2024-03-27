@@ -4788,7 +4788,7 @@ mod solver {
                 let mut x0 = 0;
                 for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
                     let bh = (a + bw - 1) / bw;
-                    let over = bh.saturating_sub(self.w);
+                    let over = (h0 + bh).saturating_sub(self.w);
                     let h1 = min(h0 + bh, self.w);
                     let cost = (over, h1);
                     if min_cost.chmin(cost) {
