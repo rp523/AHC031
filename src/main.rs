@@ -4463,8 +4463,146 @@ mod solver {
             }
         }
     }
-    use num::traits::ops::overflowing;
     use rect::Rect;
+
+    mod partition {
+        use super::*;
+        pub struct Partition {
+            hs: BTreeMap<usize, Vec<usize>>,
+            vs: BTreeMap<usize, Vec<usize>>,
+        }
+        impl Partition {
+            pub fn new(rects: &[Rect], w: usize) -> Self {
+                let mut hps = BTreeMap::new();
+                let mut vps = BTreeMap::new();
+                for r in rects.iter() {
+                    *hps.entry(r.y0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x0)
+                        .or_insert(0) += 1;
+                    *hps.entry(r.y0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x1)
+                        .or_insert(0) -= 1;
+                    *hps.entry(r.y1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x0)
+                        .or_insert(0) += 1;
+                    *hps.entry(r.y1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x1)
+                        .or_insert(0) -= 1;
+                    *vps.entry(r.x0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y0)
+                        .or_insert(0) += 1;
+                    *vps.entry(r.x0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y1)
+                        .or_insert(0) -= 1;
+                    *vps.entry(r.x1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y0)
+                        .or_insert(0) += 1;
+                    *vps.entry(r.x1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y1)
+                        .or_insert(0) -= 1;
+                }
+                let mut hs = BTreeMap::new();
+                for (y, xs) in hps {
+                    if y == 0 || y == w {
+                        continue;
+                    }
+                    let mut v = 0;
+                    let mut x0 = 0;
+                    for (x, dv) in xs {
+                        if dv == 0 {
+                            continue;
+                        }
+                        if v == 0 {
+                            debug_assert!(dv > 0);
+                            x0 = x;
+                        }
+                        v += dv;
+                        if v == 0 {
+                            debug_assert!(dv < 0);
+                            hs.entry(y).or_insert(vec![]).push(x0);
+                            hs.entry(y).or_insert(vec![]).push(x);
+                        }
+                    }
+                }
+                let mut vs = BTreeMap::new();
+                for (x, ys) in vps {
+                    if x == 0 || x == w {
+                        continue;
+                    }
+                    let mut v = 0;
+                    let mut y0 = 0;
+                    for (y, dv) in ys {
+                        if dv == 0 {
+                            continue;
+                        }
+                        if v == 0 {
+                            debug_assert!(dv > 0);
+                            y0 = x;
+                        }
+                        v += dv;
+                        if v == 0 {
+                            debug_assert!(dv < 0);
+                            vs.entry(x).or_insert(vec![]).push(y0);
+                            vs.entry(x).or_insert(vec![]).push(y);
+                        }
+                    }
+                }
+                Self { hs, vs }
+            }
+            pub fn dist(&self, rhs: &Self) -> usize {
+                let mut dist = 0;
+                {
+                    let mut hs = BTreeMap::new();
+                    for (y, xs) in self.hs.iter().chain(rhs.hs.iter()) {
+                        for &x in xs {
+                            hs.entry(y).or_insert(vec![]).push(x);
+                        }
+                    }
+                    for (_x, mut xs) in hs {
+                        xs.sort();
+                        let mut x0 = 0;
+                        for (i, x) in xs.into_iter().enumerate() {
+                            if i % 2 == 0 {
+                                x0 = x;
+                            } else {
+                                dist += x - x0;
+                            }
+                        }
+                    }
+                }
+                {
+                    let mut vs = BTreeMap::new();
+                    for (x, ys) in self.vs.iter().chain(rhs.vs.iter()) {
+                        for &y in ys {
+                            vs.entry(x).or_insert(vec![]).push(y);
+                        }
+                    }
+                    for (_x, mut ys) in vs {
+                        ys.sort();
+                        let mut y0 = 0;
+                        for (i, y) in ys.into_iter().enumerate() {
+                            if i % 2 == 0 {
+                                y0 = y;
+                            } else {
+                                dist += y - y0;
+                            }
+                        }
+                    }
+                }
+                dist
+            }
+        }
+    }
+    use partition::Partition;
+
     pub struct Solver {
         t0: Instant,
         w: usize,
@@ -4473,6 +4611,36 @@ mod solver {
         a: Vec<Vec<usize>>,
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
+    mod state {
+        use super::*;
+        #[derive(Clone, PartialEq, Eq)]
+        pub struct State {
+            pub cost: usize,
+            pub rects: Vec<Rect>,
+        }
+        impl State {
+            pub fn new(area_over: usize, rects: Vec<Rect>) -> Self {
+                Self {
+                    cost: area_over * 100,
+                    rects,
+                }
+            }
+        }
+        impl PartialOrd for State {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                self.cost.partial_cmp(&other.cost)
+            }
+        }
+        impl Ord for State {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.cost.cmp(&other.cost)
+            }
+        }
+    }
+    use state::State;
+
+    const GEN_SEED_TIME: u128 = 1_000_000;
+    const QUE_LEN_MAX: usize = 35;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
@@ -4524,20 +4692,96 @@ mod solver {
             }
         }
         pub fn solve(&self) {
-            let mut ans = vec![];
             let bin_ws = self.gen_bin_w();
-            for a in self.a.iter() {
-                let (_, rects) = self.construct(a, &bin_ws);
-                ans.push(rects);
+            let mut partitionss = vec![];
+            let mut statess = vec![];
+            for (di, a) in self.a.iter().enumerate() {
+                let states = self.construct(di, a, &bin_ws);
+                let partitions = states
+                    .iter()
+                    .map(|state| Partition::new(&state.rects, self.w))
+                    .collect::<Vec<_>>();
+                statess.push(states);
+                partitionss.push(partitions);
             }
+            let ans = {
+                const INF: usize = 1usize << 60;
+                let mut dp = statess[0]
+                    .iter()
+                    .map(|state| state.cost)
+                    .collect::<Vec<_>>();
+                let mut trace = vec![vec![]; self.d];
+                for (di, trace) in trace.iter_mut().enumerate().skip(1) {
+                    let mut pre = vec![INF; statess[di].len()];
+                    swap(&mut dp, &mut pre);
+                    for (i0, partition0) in partitionss[di - 1].iter().enumerate() {
+                        for (i1, (state1, partition1)) in
+                            statess[di].iter().zip(partitionss[di].iter()).enumerate()
+                        {
+                            let nxt = pre[i0] + state1.cost + partition0.dist(partition1);
+                            if dp[i1].chmin(nxt) {
+                                while trace.len() <= i1 {
+                                    trace.push(0);
+                                }
+                                trace[i1] = i0;
+                            }
+                        }
+                    }
+                }
+                let mut piv = 0;
+                let mut cum = None;
+                for (i, dp) in dp.into_iter().enumerate() {
+                    if cum.chmin(dp) {
+                        piv = i;
+                    }
+                }
+                eprintln!("{}", cum.unwrap());
+                let mut ans = vec![];
+                for di in (0..self.d).rev() {
+                    ans.push(statess[di][piv].rects.clone());
+                    if di > 0 {
+                        piv = trace[di][piv];
+                    }
+                }
+                ans.reverse();
+                ans
+            };
             self.answer(ans);
-            eprintln!("0");
+            /*
+            for i in 1..self.d {
+                score += partitions[i - 1].dist(&partitions[i]);
+            }
+            eprintln!("{}", score + 1);
+             */
         }
-        fn construct(&self, a: &[usize], bin_ws: &[usize]) -> (usize, Vec<Rect>) {
+        fn construct(&self, di: usize, a: &[usize], bin_ws: &[usize]) -> Vec<State> {
+            let mut rng = ChaChaRng::from_seed([0; 32]);
+            let mut order = (0..self.n).rev().collect::<Vec<_>>();
+            let mut que = BinaryHeap::new();
+            que.push(self.construct_state(a, bin_ws, &order));
+            let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
+            while self.t0.elapsed().as_micros() < lim_t {
+                order.shuffle(&mut rng);
+                let state = self.construct_state(a, bin_ws, &order);
+                if que.len() < QUE_LEN_MAX {
+                    que.push(state);
+                } else if que.peek().unwrap() > &state {
+                    que.pop();
+                    que.push(state);
+                }
+            }
+            let mut states = vec![];
+            while let Some(state) = que.pop() {
+                states.push(state);
+            }
+            states.reverse();
+            states
+        }
+        fn construct_state(&self, a: &[usize], bin_ws: &[usize], order: &[usize]) -> State {
             let mut rects = vec![];
             let mut height = vec![0; bin_ws.len()];
             let mut over_rect = 0;
-            for a in a.iter().rev() {
+            for a in order.iter().map(|&i| a[i]) {
                 let mut min_cost = None;
                 let mut min_cost_rect = Rect::new(0, 0, 0, 0);
                 let mut min_cost_bi = 0;
@@ -4577,13 +4821,13 @@ mod solver {
             assert!(rects.iter().all(|rect| rect.y1 <= self.w));
             assert!(rects.iter().all(|rect| rect.x0 <= self.w));
             assert!(rects.iter().all(|rect| rect.x1 <= self.w));
-            let cost = a
+            rects.sort_by_cached_key(|r| r.area());
+            let area_over = a
                 .iter()
-                .rev()
                 .zip(rects.iter())
                 .map(|(a, rect)| a.saturating_sub(rect.area()))
                 .sum::<usize>();
-            (cost, rects)
+            State::new(area_over, rects)
         }
         fn gen_bin_w(&self) -> Vec<usize> {
             let &amax = self
