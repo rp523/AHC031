@@ -4410,6 +4410,17 @@ mod solver {
                 Self { y0, x0, y1, x1 }
             }
             #[inline(always)]
+            pub fn overlap(&self, rhs: &Self) -> bool {
+                (self.x0 < rhs.x1) && (rhs.x0 < self.x1) && (self.y0 < rhs.y1) && (rhs.y0 < self.y1)
+            }
+            #[inline(always)]
+            pub fn contains(&self, rhs: &Self) -> bool {
+                (self.x0 <= rhs.x0)
+                    && (rhs.x1 <= self.x1)
+                    && (self.y0 <= rhs.y0)
+                    && (rhs.y1 <= self.y1)
+            }
+            #[inline(always)]
             pub fn area(&self) -> usize {
                 (self.y1 - self.y0) * (self.x1 - self.x0)
             }
@@ -4461,6 +4472,31 @@ mod solver {
                     None
                 }
             }
+            #[inline(always)]
+            pub fn rot(&self, t: usize, w: usize) -> Self {
+                match t {
+                    0 => self.clone(),
+                    1 => Self {
+                        y0: self.x0,
+                        x0: w - self.y1,
+                        y1: self.x1,
+                        x1: w - self.y0,
+                    },
+                    2 => Self {
+                        y0: w - self.y1,
+                        x0: w - self.x1,
+                        y1: w - self.y0,
+                        x1: w - self.x0,
+                    },
+                    3 => Self {
+                        y0: w - self.x1,
+                        x0: self.y0,
+                        y1: w - self.x0,
+                        x1: self.y1,
+                    },
+                    _ => unreachable!(),
+                }
+            }
         }
     }
     use rect::Rect;
@@ -4509,6 +4545,183 @@ mod solver {
                 a,
                 divs,
             }
+        }
+        pub fn solve(&self) {
+            let mut ans = vec![];
+            let mut rand = XorShift64::new();
+            for (di, (a, divs)) in self.a.iter().zip(self.divs.iter()).enumerate() {
+                let rects = self.suggest(di, a, divs, &mut rand);
+                ans.push(rects);
+            }
+            self.answer(ans);
+        }
+        fn suggest(
+            &self,
+            di: usize,
+            a: &[usize],
+            divs: &[Vec<(usize, usize)>],
+            rand: &mut XorShift64,
+        ) -> Vec<Rect> {
+            mod state {
+                use super::*;
+                use std::{
+                    cmp::{Ord, PartialOrd},
+                    unreachable,
+                };
+                #[derive(Clone, PartialEq, Eq)]
+                pub struct State {
+                    pub rects: Vec<Rect>,
+                    x0s: Vec<usize>,
+                    x1s: Vec<usize>,
+                    y0s: Vec<usize>,
+                    y1s: Vec<usize>,
+                    area_cost: usize,
+                    clarity: usize,
+                }
+                impl State {
+                    pub fn new(w: usize) -> Self {
+                        Self {
+                            rects: vec![],
+                            x0s: vec![0],
+                            x1s: vec![w],
+                            y0s: vec![0],
+                            y1s: vec![w],
+                            area_cost: 0,
+                            clarity: 0,
+                        }
+                    }
+                    pub fn next(
+                        &self,
+                        w: usize,
+                        a: usize,
+                        divs: &[(usize, usize)],
+                        rand: &mut XorShift64,
+                    ) -> Option<Self> {
+                        let (bh, bw) = divs[rand.next_usize() % divs.len()];
+                        let t = rand.next_usize() % 4;
+                        let mut rrect = match t {
+                            0 => {
+                                let y0 = self.y0s[rand.next_usize() % self.y0s.len()];
+                                let x0 = self.x0s[rand.next_usize() % self.x0s.len()];
+                                let y1 = min(y0 + bh, w);
+                                let x1 = min(x0 + bw, w);
+                                Rect::new(y0, x0, y1, x1).rot(t, w)
+                            }
+                            1 => {
+                                let y1 = self.y1s[rand.next_usize() % self.y1s.len()];
+                                let x0 = self.x0s[rand.next_usize() % self.x0s.len()];
+                                let y0 = y1.saturating_sub(bh);
+                                let x1 = min(x0 + bw, w);
+                                Rect::new(y0, x0, y1, x1).rot(t, w)
+                            }
+                            2 => {
+                                let y1 = self.y1s[rand.next_usize() % self.y1s.len()];
+                                let x1 = self.x1s[rand.next_usize() % self.x1s.len()];
+                                let y0 = y1.saturating_sub(bh);
+                                let x0 = x1.saturating_sub(bw);
+                                Rect::new(y0, x0, y1, x1).rot(t, w)
+                            }
+                            3 => {
+                                let y0 = self.y0s[rand.next_usize() % self.y0s.len()];
+                                let x1 = self.x1s[rand.next_usize() % self.x1s.len()];
+                                let y1 = min(y0 + bh, w);
+                                let x0 = x1.saturating_sub(bw);
+                                Rect::new(y0, x0, y1, x1).rot(t, w)
+                            }
+                            _ => unreachable!(),
+                        };
+                        for org_rrect in self.rects.iter().map(|o| o.rot(t, w)) {
+                            if !org_rrect.overlap(&rrect) {
+                                continue;
+                            }
+                            if rrect.y0 < org_rrect.y0 {
+                                if rrect.x0 < org_rrect.x0 {
+                                    if (rrect.y1 - rrect.y0) * (org_rrect.x0 - rrect.x0)
+                                        > (org_rrect.y0 - rrect.y0) * (rrect.x1 - rrect.x0)
+                                    {
+                                        rrect.x1 = org_rrect.x0;
+                                    } else {
+                                        rrect.y1 = org_rrect.y0;
+                                    }
+                                } else {
+                                    rrect.y1 = org_rrect.y0;
+                                }
+                            } else {
+                                if rrect.x0 < org_rrect.x0 {
+                                    rrect.x1 = org_rrect.x0;
+                                } else {
+                                    return None;
+                                }
+                            }
+                        }
+                        let rect = rrect.rot((4 - t) % 4, w);
+                        if rect.area() == 0 {
+                            return None;
+                        }
+                        debug_assert!(self.rects.iter().all(|orect| !rect.overlap(orect)));
+                        let mut nxt = self.clone();
+                        nxt.rects.push(rect);
+                        if !nxt.y0s.contains(&rect.y0) {
+                            nxt.y0s.push(rect.y0);
+                        }
+                        if !nxt.y1s.contains(&rect.y1) {
+                            nxt.y1s.push(rect.y1);
+                        }
+                        if !nxt.x0s.contains(&rect.x0) {
+                            nxt.x0s.push(rect.x0);
+                        }
+                        if !nxt.x1s.contains(&rect.x1) {
+                            nxt.x1s.push(rect.x1);
+                        }
+                        nxt.area_cost += a.saturating_sub(rect.area());
+                        let mut clarity = 0;
+                        clarity.chmax(rect.x0.saturating_sub(w / 2));
+                        clarity.chmax((w / 2).saturating_sub(rect.x1));
+                        clarity.chmax(rect.y0.saturating_sub(w / 2));
+                        clarity.chmax((w / 2).saturating_sub(rect.y1));
+                        nxt.clarity.chmin(clarity);
+                        Some(nxt)
+                    }
+                }
+                impl PartialOrd for State {
+                    fn partial_cmp(&self, rhs: &Self) -> Option<std::cmp::Ordering> {
+                        (self.area_cost, Reverse(self.clarity))
+                            .partial_cmp(&(rhs.area_cost, Reverse(rhs.clarity)))
+                    }
+                }
+                impl Ord for State {
+                    fn cmp(&self, rhs: &Self) -> std::cmp::Ordering {
+                        self.partial_cmp(rhs).unwrap()
+                    }
+                }
+            }
+            use state::State;
+            use std::collections::BinaryHeap;
+            let mut que = BinaryHeap::new();
+            que.push(State::new(self.w));
+            for (i, (&a, divs)) in a.iter().zip(divs.iter()).rev().enumerate() {
+                let t0 = self.t0.elapsed().as_micros() as i64;
+                let t1 = (2_000_000 * (di * self.n + (i + 1)) / self.d / self.n) as i64;
+                let mut pque = BinaryHeap::new();
+                swap(&mut pque, &mut que);
+                let ln = pque.len() as i64;
+                for (qi, state0) in pque.into_iter().rev().enumerate() {
+                    let lim_t = t0 + (t1 - t0) * (qi as i64 + 1) / ln;
+                    loop {
+                        let Some(state1) = state0.next(self.w, a, divs, rand) else {continue;};
+                        if que.len() < 50 {
+                            que.push(state1);
+                        } else if que.peek().unwrap() > &state1 {
+                            que.pop();
+                            que.push(state1);
+                        }
+                        if self.t0.elapsed().as_micros() as i64 > lim_t {
+                            break;
+                        }
+                    }
+                }
+            }
+            que.pop().unwrap().rects
         }
         fn pyramid(&self, _a: &[usize], divs: &[Vec<(usize, usize)>]) -> Vec<Rect> {
             let mut right_y0x0 = BTreeMap::new();
@@ -4624,14 +4837,6 @@ mod solver {
             }
             debug_assert!(rects.len() == divs.len());
             rects
-        }
-        pub fn solve(&self) {
-            let mut ans = vec![];
-            for (a, divs) in self.a.iter().zip(self.divs.iter()) {
-                let rects = self.pyramid(a, divs);
-                ans.push(rects);
-            }
-            self.answer(ans);
         }
         pub fn solve_expand(&self) {
             let mut rand = XorShift64::new();
