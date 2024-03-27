@@ -4473,6 +4473,18 @@ mod solver {
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
     impl Solver {
+        fn answer(&self, rects: Vec<Vec<Rect>>) {
+            for mut rects in rects {
+                rects.sort_by_cached_key(|r| r.area());
+                for rect in rects {
+                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
+                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
+                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
+                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                    println!("{} {} {} {}", rect.y0, rect.x0, rect.y1, rect.x1);
+                }
+            }
+        }
         pub fn new() -> Self {
             let t0 = Instant::now();
             let w = read::<usize>();
@@ -4510,309 +4522,67 @@ mod solver {
                 divs,
             }
         }
-        fn pyramid(&self, _a: &[usize], divs: &[Vec<(usize, usize)>]) -> Vec<Rect> {
-            let mut right_y0x0 = BTreeMap::new();
-            let mut rects = vec![];
-            let mut rems = vec![];
-            // from right top
-            {
-                let mut y1 = self.w;
-                let mut lim_bw = self.w;
-                for divs in divs.iter().rev() {
-                    // from big to small
-                    let mut ok = false;
-                    for &(bh, bw) in divs.iter().filter(|&&(_bh, bw)| bw <= lim_bw) {
-                        if y1 < bh {
-                            continue;
-                        }
-                        let y0 = y1 - bh;
-                        let x1 = self.w; // fixed
-                        let x0 = x1 - bw;
-                        let rect = Rect::new(y0, x0, y1, x1);
-                        debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                        debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                        debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                        debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                        rects.push(rect);
-                        right_y0x0.insert(y0, x0);
-                        lim_bw.chmin(bw);
-                        if rems.is_empty() {
-                            rems.push((y1, x0, RIGHT));
-                        }
-                        rems.push((y0, x0, RIGHT));
-                        ok = true;
-                        y1 = y0;
-                        break;
-                    }
-                    if !ok {
-                        break;
-                    }
-                }
-                if !right_y0x0.contains_key(&0) {
-                    right_y0x0.insert(0, self.w);
-                }
-            }
-            let right_y0x0 = right_y0x0;
-            // from left bottom
-            if rects.len() < divs.len() {
-                {
-                    let mut y0 = 0;
-                    for divs in divs.iter().rev().skip(rects.len()) {
-                        let mut ok = false;
-                        for &(bh, bw) in divs.iter() {
-                            let y1 = y0 + bh;
-                            if y1 > self.w {
-                                break;
-                            }
-                            let x0 = 0; // fixed
-                            let x1 = bw;
-                            let (_, &lim_x1) = right_y0x0.less_than(&y1).unwrap();
-                            if lim_x1 < x1 {
-                                continue;
-                            }
-                            let rect = Rect::new(y0, x0, y1, x1);
-                            debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                            debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                            debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                            debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                            rects.push(rect);
-                            rems.push((y0, x1, LEFT));
-                            ok = true;
-                            y0 = y1;
-                            break;
-                        }
-                        if !ok {
-                            break;
-                        }
-                    }
-                    if y0 < self.w {
-                        rems.push((y0, 0, LEFT));
-                    }
-                }
-                let mut cands = vec![];
-                // ascending order from last
-                rems.sort_by_cached_key(|(y, _x, _lr)| Reverse(*y));
-                let mut x0 = 0;
-                let mut x1 = self.w;
-                let mut y0 = 0;
-                while let Some((y1, x, lr)) = rems.pop() {
-                    let dh = y1 - y0;
-                    let dw = x1 - x0;
-                    if dh > 0 && dw > 0 {
-                        cands.push(Rect::new(y0, x0, y1, x1));
-                        if cands.len() >= divs.len() {
-                            break;
-                        }
-                    }
-                    if lr == LEFT {
-                        x0 = x;
-                    } else if lr == RIGHT {
-                        x1 = x;
-                    } else {
-                        unreachable!()
-                    }
-                    y0 = y1;
-                }
-                cands.sort_by_cached_key(|rect| rect.area());
-                for rect in cands.iter().rev().take(divs.len() - rects.len()) {
-                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                    rects.push(rect.clone());
-                }
-            }
-            debug_assert!(rects.len() == divs.len());
-            rects
-        }
         pub fn solve(&self) {
             let mut ans = vec![];
-            for (a, divs) in self.a.iter().zip(self.divs.iter()) {
-                let rects = self.pyramid(a, divs);
+            let bin_ws = self.gen_bin_w();
+            for a in self.a.iter() {
+                let rects = self.construct(a, &bin_ws);
                 ans.push(rects);
             }
             self.answer(ans);
         }
-        pub fn solve_expand(&self) {
-            let mut rand = XorShift64::new();
-            let mut costs = vec![];
-            let mut state = vec![];
-            for a in self.a.iter() {
-                let mut ah = a
-                    .iter()
-                    .map(|&a| (a + self.w - 1) / self.w)
-                    .collect::<Vec<_>>();
-                let ah_sum = ah.iter().sum::<usize>();
-                let mut ovr = ah_sum.saturating_sub(self.w);
-                for ah in ah.iter_mut() {
-                    let del_cap = *ah - 1;
-                    if ovr > 0 {
-                        let del = min(del_cap, ovr);
-                        *ah -= del;
-                        ovr -= del;
+        fn construct(&self, a: &[usize], bin_ws: &[usize]) -> Vec<Rect> {
+            let mut rects = vec![];
+            let mut height = vec![0; bin_ws.len()];
+            for a in a.iter().rev() {
+                let mut min_cost = None;
+                let mut min_cost_rect = Rect::new(0, 0, 0, 0);
+                let mut min_cost_bi = 0;
+                let mut x0 = 0;
+                for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
+                    let bh = (a + bw - 1) / bw;
+                    let over = bh.saturating_sub(self.w);
+                    let h1 = min(h0 + bh, self.w);
+                    let cost = (over, h1);
+                    if min_cost.chmin(cost) {
+                        min_cost_bi = bi;
+                        min_cost_rect = Rect::new(h0, x0, h1, x0 + bw);
                     }
+                    x0 += bw;
                 }
-                let na = ah;
-                let mut y = 0;
-                let mut rects = vec![];
-                let mut cost = 0;
-                for (na, a) in na.into_iter().zip(a.iter()) {
-                    let y0 = y;
-                    let y1 = y0 + na;
-                    let x0 = 0;
-                    let x1 = self.w;
-                    let rect = Rect::new(y0, x0, y1, x1);
-                    cost += 100 * a.saturating_sub(rect.area());
-                    rects.push(rect);
-                    y = y1;
-                }
-                costs.push(cost);
-                state.push(rects);
+                rects.push(min_cost_rect);
+                height[min_cost_bi] += min_cost_rect.y1 - min_cost_rect.y0;
             }
-            //costs.iter_mut().for_each(|cost| *cost = 1usize << 60);
-            const LIMIT_TIME: u128 = 2000;
-            //return Self::answer(state);
-            while self.t0.elapsed().as_millis() < LIMIT_TIME {
-                let mut all_cost_zero = true;
-                for (a, (cost, rects)) in self.a.iter().zip(costs.iter_mut().zip(state.iter_mut()))
-                {
-                    if cost == &0 {
-                        continue;
-                    } else {
-                        all_cost_zero = false;
-                    }
-                    let (cost1, rects1) = self.expand_gen(a, &mut rand);
-                    if cost.chmin(cost1) {
-                        *rects = rects1;
-                    }
-                }
-                if all_cost_zero {
+            debug_assert!(rects.iter().all(|rect| rect.area() > 0));
+            rects
+        }
+        fn gen_bin_w(&self) -> Vec<usize> {
+            let &amax = self
+                .a
+                .iter()
+                .map(|a| a.iter().max().unwrap())
+                .max()
+                .unwrap();
+            let mut unit = 0;
+            for bw in 1..=self.w {
+                let bh = (amax + bw - 1) / bw;
+                if bh <= self.w {
+                    unit = bw;
                     break;
                 }
             }
-            self.answer(state);
-        }
-        fn answer(&self, rects: Vec<Vec<Rect>>) {
-            for mut rects in rects {
-                rects.sort_by_cached_key(|r| r.area());
-                for rect in rects {
-                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
-                    println!("{} {} {} {}", rect.y0, rect.x0, rect.y1, rect.x1);
+            let mut rem = self.w;
+            let mut bin_w = vec![];
+            loop {
+                if rem > unit * 2 {
+                    rem -= unit;
+                    bin_w.push(unit);
+                } else {
+                    bin_w.push(rem);
+                    break;
                 }
             }
-        }
-        fn expand_gen(&self, a: &[usize], rand: &mut XorShift64) -> (usize, Vec<Rect>) {
-            let mut seeds = vec![];
-            let rdelta = 0.5 * self.w as f64 / self.n as f64;
-            let yc = 0.5 * self.w as f64;
-            let xc = 0.5 * self.w as f64;
-            for i in 0..self.n {
-                let r = rdelta * i as f64;
-                let theta = rand.next_f64() * 2.0 * std::f64::consts::PI;
-                let y = ((yc + r * theta.sin()) as usize).clamp(0, self.w - 1);
-                let x = ((xc + r * theta.cos()) as usize).clamp(0, self.w - 1);
-                seeds.push((y, x))
-            }
-            let mut rects = seeds
-                .into_iter()
-                .map(|(y, x)| Rect::from_point(y, x))
-                .collect::<Vec<_>>();
-            let mut que = BinaryHeap::new();
-            for (ri, (&a, rect)) in a.iter().zip(rects.iter()).enumerate() {
-                let cost = 100 * a.saturating_sub(rect.area());
-                if cost > 0 {
-                    que.push((cost, ri));
-                }
-            }
-            while let Some((_cost, ri)) = que.pop() {
-                let rect = &rects[ri];
-                let mut mind = vec![None; 4];
-                for (_nri, nrect) in rects.iter().enumerate().filter(|(nri, _nrect)| &ri != nri) {
-                    if let Some(d) = rect.left_dist(nrect) {
-                        mind[LEFT].chmin(d);
-                    }
-                    if let Some(d) = rect.right_dist(nrect) {
-                        mind[RIGHT].chmin(d);
-                    }
-                    if let Some(d) = rect.lower_dist(nrect) {
-                        mind[LOWER].chmin(d);
-                    }
-                    if let Some(d) = rect.upper_dist(nrect) {
-                        mind[UPPER].chmin(d);
-                    }
-                }
-                let mut ndir = None;
-                // to frame
-                {
-                    let mut ev = None;
-                    for (di, mind) in mind.iter().enumerate() {
-                        if mind.is_some() {
-                            continue;
-                        }
-                        let d = match di {
-                            LEFT => rect.x0,
-                            RIGHT => self.w - rect.x1,
-                            LOWER => rect.y0,
-                            UPPER => self.w - rect.y1,
-                            _ => unreachable!(),
-                        };
-                        if d == 0 {
-                            continue;
-                        }
-                        if ev.chmin(d) {
-                            ndir = Some((di, d));
-                        }
-                    }
-                }
-                if ndir.is_none() {
-                    let mut ev = None;
-                    for (di, mind) in mind.into_iter().enumerate() {
-                        let Some(mind) = mind else {continue;};
-                        if mind == 0 {
-                            continue;
-                        }
-                        if ev.chmax(mind) {
-                            ndir = Some((di, mind));
-                        }
-                    }
-                }
-                let Some((ndir, mind)) = ndir else {continue;};
-                let rect = &mut rects[ri];
-                let h = rect.y1 - rect.y0;
-                let w = rect.x1 - rect.x0;
-                match ndir {
-                    LEFT => {
-                        let lim = (a[ri] + h - 1) / h - w;
-                        rect.x0 -= min(mind, lim);
-                    }
-                    RIGHT => {
-                        let lim = (a[ri] + h - 1) / h - w;
-                        rect.x1 += min(mind, lim);
-                    }
-                    LOWER => {
-                        let lim = (a[ri] + w - 1) / w - h;
-                        rect.y0 -= min(mind, lim);
-                    }
-                    UPPER => {
-                        let lim = (a[ri] + w - 1) / w - h;
-                        rect.y1 += min(mind, lim);
-                    }
-                    _ => unreachable!(),
-                }
-                let rem_cost = a[ri].saturating_sub(rect.area());
-                if rem_cost > 0 {
-                    que.push((rem_cost, ri));
-                }
-            }
-            let cost = a
-                .iter()
-                .zip(rects.iter())
-                .map(|(&a, rect)| 100 * a.saturating_sub(rect.area()))
-                .sum::<usize>();
-            (cost, rects)
+            bin_w
         }
     }
 }
