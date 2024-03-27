@@ -4463,6 +4463,7 @@ mod solver {
             }
         }
     }
+    use num::traits::ops::overflowing;
     use rect::Rect;
     pub struct Solver {
         t0: Instant,
@@ -4526,14 +4527,16 @@ mod solver {
             let mut ans = vec![];
             let bin_ws = self.gen_bin_w();
             for a in self.a.iter() {
-                let rects = self.construct(a, &bin_ws);
+                let (_, rects) = self.construct(a, &bin_ws);
                 ans.push(rects);
             }
             self.answer(ans);
+            eprintln!("0");
         }
-        fn construct(&self, a: &[usize], bin_ws: &[usize]) -> Vec<Rect> {
+        fn construct(&self, a: &[usize], bin_ws: &[usize]) -> (usize, Vec<Rect>) {
             let mut rects = vec![];
             let mut height = vec![0; bin_ws.len()];
+            let mut over_rect = 0;
             for a in a.iter().rev() {
                 let mut min_cost = None;
                 let mut min_cost_rect = Rect::new(0, 0, 0, 0);
@@ -4550,11 +4553,37 @@ mod solver {
                     }
                     x0 += bw;
                 }
+                if min_cost_rect.area() == 0 {
+                    over_rect += 1;
+                    continue;
+                }
                 rects.push(min_cost_rect);
                 height[min_cost_bi] += min_cost_rect.y1 - min_cost_rect.y0;
             }
-            debug_assert!(rects.iter().all(|rect| rect.area() > 0));
-            rects
+            rects.sort_by_cached_key(|r| Reverse(r.area()));
+            if over_rect > 0 {
+                let drect = rects.pop().unwrap();
+                over_rect += 1;
+                for dl in 0..over_rect {
+                    let rect = Rect::new(drect.y0, drect.x0 + dl, drect.y1, drect.x0 + dl + 1);
+                    rects.push(rect);
+                }
+            }
+            assert!(rects.len() == self.n);
+            assert!(rects.iter().all(|rect| rect.area() > 0));
+            assert!(rects.iter().all(|rect| rect.y1 > rect.y0));
+            assert!(rects.iter().all(|rect| rect.x1 > rect.x0));
+            assert!(rects.iter().all(|rect| rect.y0 <= self.w));
+            assert!(rects.iter().all(|rect| rect.y1 <= self.w));
+            assert!(rects.iter().all(|rect| rect.x0 <= self.w));
+            assert!(rects.iter().all(|rect| rect.x1 <= self.w));
+            let cost = a
+                .iter()
+                .rev()
+                .zip(rects.iter())
+                .map(|(a, rect)| a.saturating_sub(rect.area()))
+                .sum::<usize>();
+            (cost, rects)
         }
         fn gen_bin_w(&self) -> Vec<usize> {
             let &amax = self
