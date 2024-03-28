@@ -4643,8 +4643,7 @@ mod solver {
     const QUE_LEN_MAX: usize = 35;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
-            for mut rects in rects {
-                rects.sort_by_cached_key(|r| r.area());
+            for rects in rects {
                 for rect in rects {
                     debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
                     debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
@@ -4735,7 +4734,7 @@ mod solver {
                         piv = i;
                     }
                 }
-                eprintln!("{}", cum.unwrap());
+                eprintln!("{}", cum.unwrap() + 1);
                 let mut ans = vec![];
                 for di in (0..self.d).rev() {
                     ans.push(statess[di][piv].rects.clone());
@@ -4778,50 +4777,57 @@ mod solver {
             states
         }
         fn construct_state(&self, a: &[usize], bin_ws: &[usize], order: &[usize]) -> State {
-            let mut rects = vec![];
+            let mut irects = vec![];
             let mut height = vec![0; bin_ws.len()];
-            let mut over_rect = 0;
-            for a in order.iter().map(|&i| a[i]) {
+            let mut over_is = vec![];
+            for &i in order.iter() {
+                let a = a[i];
                 let mut min_cost = None;
-                let mut min_cost_rect = Rect::new(0, 0, 0, 0);
+                let mut min_cost_rect = None;
                 let mut min_cost_bi = 0;
                 let mut x0 = 0;
                 for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
                     let bh = (a + bw - 1) / bw;
-                    let over = (h0 + bh).saturating_sub(self.w);
                     let h1 = min(h0 + bh, self.w);
-                    let cost = (over, h1);
-                    if min_cost.chmin(cost) {
-                        min_cost_bi = bi;
-                        min_cost_rect = Rect::new(h0, x0, h1, x0 + bw);
+                    if h1 > h0 {
+                        let over = bw * (h0 + bh).saturating_sub(self.w);
+                        let cost = (over, h1);
+                        if min_cost.chmin(cost) {
+                            min_cost_bi = bi;
+                            min_cost_rect = Some(Rect::new(h0, x0, h1, x0 + bw));
+                        }
                     }
                     x0 += bw;
                 }
-                if min_cost_rect.area() == 0 {
-                    over_rect += 1;
-                    continue;
+                if let Some(rect) = min_cost_rect {
+                    height[min_cost_bi] += rect.y1 - rect.y0;
+                    irects.push((i, rect));
+                } else {
+                    over_is.push(i);
                 }
-                rects.push(min_cost_rect);
-                height[min_cost_bi] += min_cost_rect.y1 - min_cost_rect.y0;
             }
-            rects.sort_by_cached_key(|r| Reverse(r.area()));
-            if over_rect > 0 {
-                let drect = rects.pop().unwrap();
-                over_rect += 1;
-                for dl in 0..over_rect {
+            if !over_is.is_empty() {
+                irects.sort_by_cached_key(|(_i, r)| Reverse(r.area()));
+                let (di, drect) = irects.pop().unwrap();
+                over_is.push(di);
+                for (dl, di) in over_is.into_iter().enumerate() {
                     let rect = Rect::new(drect.y0, drect.x0 + dl, drect.y1, drect.x0 + dl + 1);
-                    rects.push(rect);
+                    irects.push((di, rect));
                 }
             }
-            assert!(rects.len() == self.n);
-            assert!(rects.iter().all(|rect| rect.area() > 0));
-            assert!(rects.iter().all(|rect| rect.y1 > rect.y0));
-            assert!(rects.iter().all(|rect| rect.x1 > rect.x0));
-            assert!(rects.iter().all(|rect| rect.y0 <= self.w));
-            assert!(rects.iter().all(|rect| rect.y1 <= self.w));
-            assert!(rects.iter().all(|rect| rect.x0 <= self.w));
-            assert!(rects.iter().all(|rect| rect.x1 <= self.w));
-            rects.sort_by_cached_key(|r| r.area());
+            assert!(irects.len() == self.n);
+            assert!(irects.iter().all(|(_i, rect)| rect.area() > 0));
+            assert!(irects.iter().all(|(_i, rect)| rect.y1 > rect.y0));
+            assert!(irects.iter().all(|(_i, rect)| rect.x1 > rect.x0));
+            assert!(irects.iter().all(|(_i, rect)| rect.y0 <= self.w));
+            assert!(irects.iter().all(|(_i, rect)| rect.y1 <= self.w));
+            assert!(irects.iter().all(|(_i, rect)| rect.x0 <= self.w));
+            assert!(irects.iter().all(|(_i, rect)| rect.x1 <= self.w));
+            irects.sort_by_cached_key(|(i, _rect)| *i);
+            let rects = irects
+                .into_iter()
+                .map(|(_i, rect)| rect)
+                .collect::<Vec<_>>();
             let area_over = a
                 .iter()
                 .zip(rects.iter())
