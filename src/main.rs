@@ -4468,6 +4468,7 @@ mod solver {
 
     mod partition {
         use super::*;
+        #[derive(Clone, PartialEq, Eq)]
         pub struct Partition {
             hs: BTreeMap<usize, Vec<usize>>,
             vs: BTreeMap<usize, Vec<usize>>,
@@ -4608,25 +4609,44 @@ mod solver {
         use super::*;
         #[derive(Clone, PartialEq, Eq)]
         pub struct State {
-            pub cost: usize,
+            pub cum_cost: usize,
+            pub prev_i: usize,
             pub rects: Vec<Rect>,
+            pub partition: Partition,
         }
         impl State {
-            pub fn new(area_over: usize, rects: Vec<Rect>) -> Self {
+            pub fn new(area_over: usize, rects: Vec<Rect>, prev: &[Self]) -> Self {
+                let partition = Partition::new(&rects);
+                let (cum_cost, prev_i) = if prev.is_empty() {
+                    (area_over * 100, 0)
+                } else {
+                    let mut min_cum_cost = None;
+                    let mut prev_i = 0;
+                    for (i, pstate) in prev.iter().enumerate() {
+                        let cum_cost =
+                            pstate.cum_cost + area_over * 100 + partition.dist(&pstate.partition);
+                        if min_cum_cost.chmin(cum_cost) {
+                            prev_i = i;
+                        }
+                    }
+                    (min_cum_cost.unwrap(), prev_i)
+                };
                 Self {
-                    cost: area_over * 100,
+                    cum_cost,
+                    prev_i,
                     rects,
+                    partition,
                 }
             }
         }
         impl PartialOrd for State {
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                self.cost.partial_cmp(&other.cost)
+                self.cum_cost.partial_cmp(&other.cum_cost)
             }
         }
         impl Ord for State {
             fn cmp(&self, other: &Self) -> Ordering {
-                self.cost.cmp(&other.cost)
+                self.partial_cmp(other).unwrap()
             }
         }
     }
@@ -4638,8 +4658,8 @@ mod solver {
         a: Vec<Vec<usize>>,
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
-    const GEN_SEED_TIME: u128 = 1_000_000;
-    const QUE_LEN_MAX: usize = 35;
+    const GEN_SEED_TIME: u128 = 2_000_000;
+    const QUE_LEN_MAX: usize = 16;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for rects in rects {
@@ -4684,57 +4704,35 @@ mod solver {
         }
         pub fn solve(&self) {
             let bin_ws = self.gen_bin_w();
-            let mut partitionss = vec![];
-            let mut statess = vec![];
+            let mut statess: Vec<Vec<State>> = vec![];
+            let dummy = vec![];
             for (di, a) in self.a.iter().enumerate() {
-                let states = self.construct(di, a, &bin_ws);
-                let partitions = states
-                    .iter()
-                    .map(|state| Partition::new(&state.rects))
-                    .collect::<Vec<_>>();
+                let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
+                let states = self.construct(
+                    lim_t,
+                    a,
+                    &bin_ws,
+                    if di == 0 { &dummy } else { &statess[di - 1] },
+                );
                 statess.push(states);
-                partitionss.push(partitions);
             }
             let ans = {
-                const INF: usize = 1usize << 60;
-                let mut dp = statess[0]
-                    .iter()
-                    .map(|state| state.cost)
-                    .collect::<Vec<_>>();
-                let mut trace = vec![vec![]; self.d];
-                for (di, trace) in trace.iter_mut().enumerate().skip(1) {
-                    let mut pre = vec![INF; statess[di].len()];
-                    swap(&mut dp, &mut pre);
-                    for (i0, partition0) in partitionss[di - 1].iter().enumerate() {
-                        for (i1, (state1, partition1)) in
-                            statess[di].iter().zip(partitionss[di].iter()).enumerate()
-                        {
-                            let nxt = pre[i0] + state1.cost + partition0.dist(partition1);
-                            if dp[i1].chmin(nxt) {
-                                while trace.len() <= i1 {
-                                    trace.push(0);
-                                }
-                                trace[i1] = i0;
-                            }
-                        }
-                    }
-                }
                 let mut piv = 0;
-                let mut cum = None;
-                for (i, dp) in dp.into_iter().enumerate() {
-                    if cum.chmin(dp) {
+                let mut score_min = None;
+                for (i, lstate) in statess[self.d - 1].iter().enumerate() {
+                    if score_min.chmin(lstate.cum_cost) {
                         piv = i;
                     }
                 }
-                eprintln!("{}", cum.unwrap() + 1);
                 let mut ans = vec![];
                 for di in (0..self.d).rev() {
                     ans.push(statess[di][piv].rects.clone());
                     if di > 0 {
-                        piv = trace[di][piv];
+                        piv = statess[di][piv].prev_i;
                     }
                 }
                 ans.reverse();
+                eprintln!("{}", score_min.unwrap() + 1);
                 ans
             };
             self.answer(ans);
@@ -4745,15 +4743,22 @@ mod solver {
             eprintln!("{}", score + 1);
              */
         }
-        fn construct(&self, di: usize, a: &[usize], bin_ws: &[usize]) -> Vec<State> {
+        fn construct(
+            &self,
+            lim_t: u128,
+            a: &[usize],
+            bin_ws: &[usize],
+            pstates: &[State],
+        ) -> Vec<State> {
             let mut rng = ChaChaRng::from_seed([0; 32]);
             let mut order = (0..self.n).rev().collect::<Vec<_>>();
             let mut que = BinaryHeap::new();
-            que.push(self.construct_state(a, bin_ws, &order));
-            let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
+            que.push(self.construct_state(a, bin_ws, &order, pstates));
+            let mut tri = 1;
             while self.t0.elapsed().as_micros() < lim_t {
+                tri += 1;
                 order.shuffle(&mut rng);
-                let state = self.construct_state(a, bin_ws, &order);
+                let state = self.construct_state(a, bin_ws, &order, pstates);
                 if que.len() < QUE_LEN_MAX {
                     que.push(state);
                 } else if que.peek().unwrap() > &state {
@@ -4761,6 +4766,7 @@ mod solver {
                     que.push(state);
                 }
             }
+            eprintln!("{tri}");
             let mut states = vec![];
             while let Some(state) = que.pop() {
                 states.push(state);
@@ -4768,7 +4774,13 @@ mod solver {
             states.reverse();
             states
         }
-        fn construct_state(&self, a: &[usize], bin_ws: &[usize], order: &[usize]) -> State {
+        fn construct_state(
+            &self,
+            a: &[usize],
+            bin_ws: &[usize],
+            order: &[usize],
+            pstates: &[State],
+        ) -> State {
             let mut irects = vec![];
             let mut height = vec![0; bin_ws.len()];
             let mut over_is = vec![];
@@ -4825,7 +4837,7 @@ mod solver {
                 .zip(rects.iter())
                 .map(|(a, rect)| a.saturating_sub(rect.area()))
                 .sum::<usize>();
-            State::new(area_over, rects)
+            State::new(area_over, rects, pstates)
         }
         fn gen_bin_w(&self) -> Vec<usize> {
             let &amax = self
