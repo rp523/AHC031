@@ -4816,10 +4816,23 @@ mod solver {
             assert!(irects.iter().all(|(_i, rect)| rect.x0 <= W));
             assert!(irects.iter().all(|(_i, rect)| rect.x1 <= W));
             irects.sort_by_cached_key(|(i, _rect)| *i);
-            let rects = irects
+            let mut rects = irects
                 .into_iter()
                 .map(|(_i, rect)| rect)
                 .collect::<Vec<_>>();
+            for i0 in 0..self.n {
+                let mut is_top = true;
+                let rect0 = &rects[i0];
+                for rect1 in rects.iter() {
+                    if rect0.x0 < rect1.x1 && rect1.x0 < rect0.x1 && rect0.y1 < rect1.y1 {
+                        is_top = false;
+                        break;
+                    }
+                }
+                if is_top {
+                    rects[i0].y1 = W;
+                }
+            }
             let area_over = a
                 .iter()
                 .zip(rects.iter())
@@ -4835,11 +4848,22 @@ mod solver {
                 .max()
                 .unwrap();
             let mut unit = 0;
+            let mut min_rem = None;
             for bw in 1..=W {
                 let bh = (amax + bw - 1) / bw;
-                if bh <= W {
+                if bh > W {
+                    continue;
+                }
+                let mut rem_sum = 0;
+                self.a.iter().for_each(|a| {
+                    a.iter().for_each(|&a| {
+                        let bh = (a + bw - 1) / bw;
+                        let rem = bw * bh - a;
+                        rem_sum += rem;
+                    })
+                });
+                if min_rem.chmin(rem_sum) {
                     unit = bw;
-                    break;
                 }
             }
             let mut rem = W;
