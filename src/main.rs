@@ -4642,7 +4642,20 @@ mod solver {
     const QUE_LEN_MAX: usize = 35;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
-            for rects in rects {
+            for mut rects in rects {
+                for i0 in 0..self.n {
+                    let mut is_top = true;
+                    let rect0 = &rects[i0];
+                    for rect1 in rects.iter() {
+                        if rect0.x0 < rect1.x1 && rect1.x0 < rect0.x1 && rect0.y1 < rect1.y1 {
+                            is_top = false;
+                            break;
+                        }
+                    }
+                    if is_top {
+                        rects[i0].y1 = W;
+                    }
+                }
                 for rect in rects {
                     debug_assert!(rect.y0.clamp(0, W) == rect.y0);
                     debug_assert!(rect.x0.clamp(0, W) == rect.x0);
@@ -4816,23 +4829,10 @@ mod solver {
             assert!(irects.iter().all(|(_i, rect)| rect.x0 <= W));
             assert!(irects.iter().all(|(_i, rect)| rect.x1 <= W));
             irects.sort_by_cached_key(|(i, _rect)| *i);
-            let mut rects = irects
+            let rects = irects
                 .into_iter()
                 .map(|(_i, rect)| rect)
                 .collect::<Vec<_>>();
-            for i0 in 0..self.n {
-                let mut is_top = true;
-                let rect0 = &rects[i0];
-                for rect1 in rects.iter() {
-                    if rect0.x0 < rect1.x1 && rect1.x0 < rect0.x1 && rect0.y1 < rect1.y1 {
-                        is_top = false;
-                        break;
-                    }
-                }
-                if is_top {
-                    rects[i0].y1 = W;
-                }
-            }
             let area_over = a
                 .iter()
                 .zip(rects.iter())
