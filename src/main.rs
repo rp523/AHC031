@@ -4382,6 +4382,7 @@ fn main() {
 mod solver {
     use super::*;
 
+    const W: usize = 1000;
     const LEFT: usize = 0;
     const RIGHT: usize = 1;
     const LOWER: usize = 2;
@@ -4472,7 +4473,7 @@ mod solver {
             vs: BTreeMap<usize, Vec<usize>>,
         }
         impl Partition {
-            pub fn new(rects: &[Rect], w: usize) -> Self {
+            pub fn new(rects: &[Rect]) -> Self {
                 let mut hps = BTreeMap::new();
                 let mut vps = BTreeMap::new();
                 for r in rects.iter() {
@@ -4511,7 +4512,7 @@ mod solver {
                 }
                 let mut hs = BTreeMap::new();
                 for (y, xs) in hps {
-                    if y == 0 || y == w {
+                    if y == 0 || y == W {
                         continue;
                     }
                     let mut v = 0;
@@ -4534,7 +4535,7 @@ mod solver {
                 }
                 let mut vs = BTreeMap::new();
                 for (x, ys) in vps {
-                    if x == 0 || x == w {
+                    if x == 0 || x == W {
                         continue;
                     }
                     let mut v = 0;
@@ -4603,14 +4604,6 @@ mod solver {
     }
     use partition::Partition;
 
-    pub struct Solver {
-        t0: Instant,
-        w: usize,
-        d: usize,
-        n: usize,
-        a: Vec<Vec<usize>>,
-        divs: Vec<Vec<Vec<(usize, usize)>>>,
-    }
     mod state {
         use super::*;
         #[derive(Clone, PartialEq, Eq)]
@@ -4638,24 +4631,30 @@ mod solver {
         }
     }
     use state::State;
-
+    pub struct Solver {
+        t0: Instant,
+        d: usize,
+        n: usize,
+        a: Vec<Vec<usize>>,
+        divs: Vec<Vec<Vec<(usize, usize)>>>,
+    }
     const GEN_SEED_TIME: u128 = 1_000_000;
     const QUE_LEN_MAX: usize = 35;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for rects in rects {
                 for rect in rects {
-                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                    debug_assert!(rect.y0.clamp(0, W) == rect.y0);
+                    debug_assert!(rect.x0.clamp(0, W) == rect.x0);
+                    debug_assert!(rect.y1.clamp(0, W) == rect.y1);
+                    debug_assert!(rect.x1.clamp(0, W) == rect.x1);
                     println!("{} {} {} {}", rect.y0, rect.x0, rect.y1, rect.x1);
                 }
             }
         }
         pub fn new() -> Self {
             let t0 = Instant::now();
-            let w = read::<usize>();
+            let _w = read::<usize>();
             let d = read::<usize>();
             let n = read::<usize>();
             let a = read_mat::<usize>(d, n);
@@ -4665,10 +4664,10 @@ mod solver {
                     a.iter()
                         .map(|&a| {
                             let mut hws = vec![];
-                            for (y, x) in (1..=w)
+                            for (y, x) in (1..=W)
                                 .take_while(|&y| y * y <= a)
                                 .map(|y| (y, (a + y - 1) / y))
-                                .filter(|&(_y, x)| x <= w)
+                                .filter(|&(_y, x)| x <= W)
                             {
                                 hws.push((y, x));
                                 if y != x {
@@ -4681,14 +4680,7 @@ mod solver {
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
-            Self {
-                t0,
-                w,
-                d,
-                n,
-                a,
-                divs,
-            }
+            Self { t0, d, n, a, divs }
         }
         pub fn solve(&self) {
             let bin_ws = self.gen_bin_w();
@@ -4698,7 +4690,7 @@ mod solver {
                 let states = self.construct(di, a, &bin_ws);
                 let partitions = states
                     .iter()
-                    .map(|state| Partition::new(&state.rects, self.w))
+                    .map(|state| Partition::new(&state.rects))
                     .collect::<Vec<_>>();
                 statess.push(states);
                 partitionss.push(partitions);
@@ -4788,9 +4780,9 @@ mod solver {
                 let mut x0 = 0;
                 for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
                     let bh = (a + bw - 1) / bw;
-                    let h1 = min(h0 + bh, self.w);
+                    let h1 = min(h0 + bh, W);
                     if h1 > h0 {
-                        let over = bw * (h0 + bh).saturating_sub(self.w);
+                        let over = bw * (h0 + bh).saturating_sub(W);
                         let cost = (over, h1);
                         if min_cost.chmin(cost) {
                             min_cost_bi = bi;
@@ -4819,10 +4811,10 @@ mod solver {
             assert!(irects.iter().all(|(_i, rect)| rect.area() > 0));
             assert!(irects.iter().all(|(_i, rect)| rect.y1 > rect.y0));
             assert!(irects.iter().all(|(_i, rect)| rect.x1 > rect.x0));
-            assert!(irects.iter().all(|(_i, rect)| rect.y0 <= self.w));
-            assert!(irects.iter().all(|(_i, rect)| rect.y1 <= self.w));
-            assert!(irects.iter().all(|(_i, rect)| rect.x0 <= self.w));
-            assert!(irects.iter().all(|(_i, rect)| rect.x1 <= self.w));
+            assert!(irects.iter().all(|(_i, rect)| rect.y0 <= W));
+            assert!(irects.iter().all(|(_i, rect)| rect.y1 <= W));
+            assert!(irects.iter().all(|(_i, rect)| rect.x0 <= W));
+            assert!(irects.iter().all(|(_i, rect)| rect.x1 <= W));
             irects.sort_by_cached_key(|(i, _rect)| *i);
             let rects = irects
                 .into_iter()
@@ -4843,14 +4835,14 @@ mod solver {
                 .max()
                 .unwrap();
             let mut unit = 0;
-            for bw in 1..=self.w {
+            for bw in 1..=W {
                 let bh = (amax + bw - 1) / bw;
-                if bh <= self.w {
+                if bh <= W {
                     unit = bw;
                     break;
                 }
             }
-            let mut rem = self.w;
+            let mut rem = W;
             let mut bin_w = vec![];
             loop {
                 if rem > unit * 2 {
