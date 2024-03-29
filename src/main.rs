@@ -4383,6 +4383,7 @@ mod solver {
     use super::*;
 
     const W: usize = 1000;
+    const INF: usize = 1usize << 60;
     const LEFT: usize = 0;
     const RIGHT: usize = 1;
     const LOWER: usize = 2;
@@ -4466,157 +4467,139 @@ mod solver {
     }
     use rect::Rect;
 
-    mod partition {
-        use super::*;
-        pub struct Partition {
-            hs: BTreeMap<usize, Vec<usize>>,
-            vs: BTreeMap<usize, Vec<usize>>,
-        }
-        impl Partition {
-            pub fn new(rects: &[Rect]) -> Self {
-                let mut hps = BTreeMap::new();
-                let mut vps = BTreeMap::new();
-                for r in rects.iter() {
-                    *hps.entry(r.y0)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.x0)
-                        .or_insert(0) += 1;
-                    *hps.entry(r.y0)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.x1)
-                        .or_insert(0) -= 1;
-                    *hps.entry(r.y1)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.x0)
-                        .or_insert(0) += 1;
-                    *hps.entry(r.y1)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.x1)
-                        .or_insert(0) -= 1;
-                    *vps.entry(r.x0)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.y0)
-                        .or_insert(0) += 1;
-                    *vps.entry(r.x0)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.y1)
-                        .or_insert(0) -= 1;
-                    *vps.entry(r.x1)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.y0)
-                        .or_insert(0) += 1;
-                    *vps.entry(r.x1)
-                        .or_insert(BTreeMap::new())
-                        .entry(r.y1)
-                        .or_insert(0) -= 1;
-                }
-                let mut hs = BTreeMap::new();
-                for (y, xs) in hps {
-                    if y == 0 || y == W {
-                        continue;
-                    }
-                    let mut v = 0;
-                    let mut x0 = 0;
-                    for (x, dv) in xs {
-                        if dv == 0 {
-                            continue;
-                        }
-                        if v == 0 {
-                            debug_assert!(dv > 0);
-                            x0 = x;
-                        }
-                        v += dv;
-                        if v == 0 {
-                            debug_assert!(dv < 0);
-                            hs.entry(y).or_insert(vec![]).push(x0);
-                            hs.entry(y).or_insert(vec![]).push(x);
-                        }
-                    }
-                }
-                let mut vs = BTreeMap::new();
-                for (x, ys) in vps {
-                    if x == 0 || x == W {
-                        continue;
-                    }
-                    let mut v = 0;
-                    let mut y0 = 0;
-                    for (y, dv) in ys {
-                        if dv == 0 {
-                            continue;
-                        }
-                        if v == 0 {
-                            debug_assert!(dv > 0);
-                            y0 = x;
-                        }
-                        v += dv;
-                        if v == 0 {
-                            debug_assert!(dv < 0);
-                            vs.entry(x).or_insert(vec![]).push(y0);
-                            vs.entry(x).or_insert(vec![]).push(y);
-                        }
-                    }
-                }
-                Self { hs, vs }
-            }
-            pub fn dist(&self, rhs: &Self) -> usize {
-                let mut dist = 0;
-                {
-                    let mut hs = BTreeMap::new();
-                    for (y, xs) in self.hs.iter().chain(rhs.hs.iter()) {
-                        for &x in xs {
-                            hs.entry(y).or_insert(vec![]).push(x);
-                        }
-                    }
-                    for (_x, mut xs) in hs {
-                        xs.sort();
-                        let mut x0 = 0;
-                        for (i, x) in xs.into_iter().enumerate() {
-                            if i % 2 == 0 {
-                                x0 = x;
-                            } else {
-                                dist += x - x0;
-                            }
-                        }
-                    }
-                }
-                {
-                    let mut vs = BTreeMap::new();
-                    for (x, ys) in self.vs.iter().chain(rhs.vs.iter()) {
-                        for &y in ys {
-                            vs.entry(x).or_insert(vec![]).push(y);
-                        }
-                    }
-                    for (_x, mut ys) in vs {
-                        ys.sort();
-                        let mut y0 = 0;
-                        for (i, y) in ys.into_iter().enumerate() {
-                            if i % 2 == 0 {
-                                y0 = y;
-                            } else {
-                                dist += y - y0;
-                            }
-                        }
-                    }
-                }
-                dist
-            }
-        }
-    }
-    use partition::Partition;
-
     mod state {
         use super::*;
         #[derive(Clone, PartialEq, Eq)]
         pub struct State {
             pub cost: usize,
-            pub rects: Vec<Rect>,
+            pub cols: Vec<Vec<(usize, usize)>>, // bh, ai
+            pub over_idxs: Vec<usize>,
         }
         impl State {
-            pub fn new(area_over: usize, rects: Vec<Rect>) -> Self {
+            pub fn new(a: &[usize], bin_ws: &[usize], order: &[usize]) -> Self {
+                let mut height = vec![0; bin_ws.len()];
+                let mut over_idxs = vec![];
+                let mut cols = vec![vec![]; bin_ws.len()];
+                let mut min_area = INF;
+                let mut min_area_at = (0, 0);
+                for &i in order.iter() {
+                    let a = a[i];
+                    let mut min_cost = None;
+                    let mut min_cost_bih1 = (bin_ws.len(), 0);
+                    for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
+                        let bh = (a + bw - 1) / bw;
+                        let h1 = min(h0 + bh, W);
+                        if h1 > h0 {
+                            let over = bw * (h0 + bh).saturating_sub(W);
+                            let cost = (over, h1);
+                            if min_cost.chmin(cost) {
+                                min_cost_bih1 = (bi, h1);
+                            }
+                        }
+                    }
+                    let (bi, h1) = min_cost_bih1;
+                    if bi < bin_ws.len() {
+                        let h0 = height[bi];
+                        height[bi] = h1;
+                        cols[bi].push((h1 - h0, i));
+                        let bw = bin_ws[bi];
+                        if min_area.chmin(bw * (h1 - h0)) {
+                            min_area_at = (bi, cols[bi].len() - 1);
+                        }
+                    } else {
+                        over_idxs.push(i);
+                    }
+                }
+                if !over_idxs.is_empty() {
+                    let (bi, yi) = min_area_at;
+                    over_idxs.push(cols[bi][yi].1);
+                    cols[bi][yi].1 = a.len();
+                }
+                let area_over = cols
+                    .iter()
+                    .zip(bin_ws.iter())
+                    .map(|(col, &bw)| {
+                        col.iter()
+                            .map(|&(bh, i)| {
+                                if i < a.len() {
+                                    a[i].saturating_sub(bh * bw)
+                                } else {
+                                    over_idxs
+                                        .iter()
+                                        .map(|&i| a[i])
+                                        .sum::<usize>()
+                                        .saturating_sub(bh * bw)
+                                }
+                            })
+                            .sum::<usize>()
+                    })
+                    .sum::<usize>();
                 Self {
                     cost: area_over * 100,
-                    rects,
+                    cols,
+                    over_idxs,
                 }
+            }
+            pub fn dist(&self, other: &Self, bin_ws: &[usize]) -> usize {
+                let mut dist = 0;
+                for ((col1, col0), bw) in self.cols.iter().zip(other.cols.iter()).zip(bin_ws.iter())
+                {
+                    let mut y0s = vec![0];
+                    for (bh, _i) in col0.iter() {
+                        y0s.push(y0s.last().unwrap() + bh);
+                    }
+                    let mut y1s = vec![0];
+                    for (bh, _i) in col1.iter() {
+                        y1s.push(y1s.last().unwrap() + bh);
+                    }
+                    let mut ys = y0s.into_iter().chain(y1s.into_iter()).collect::<Vec<_>>();
+                    ys.sort();
+                    let mut enc = vec![];
+                    for y in ys {
+                        if let Some(&lst) = enc.last() {
+                            if lst == y {
+                                enc.pop();
+                            } else {
+                                enc.push(y);
+                            }
+                        } else {
+                            enc.push(y);
+                        }
+                    }
+                    dist += bw * enc.len();
+                }
+                dist
+            }
+            pub fn into_rects(self, bin_ws: &[usize], n: usize) -> Vec<Rect> {
+                let mut rectis = vec![];
+                let mut x0 = 0;
+                for (col, &bw) in self.cols.into_iter().zip(bin_ws.iter()) {
+                    let mut y0 = 0;
+                    let x1 = x0 + bw;
+                    for (bh, i) in col {
+                        let y1 = y0 + bh;
+                        if i < n {
+                            let rect = Rect::new(y0, x0, y1, x1);
+                            rectis.push((rect, i));
+                        } else {
+                            for (dl, &di) in self.over_idxs.iter().enumerate() {
+                                let dx0 = x0 + dl;
+                                let dx1 = if di == self.over_idxs.len() - 1 {
+                                    x1
+                                } else {
+                                    dx0 + 1
+                                };
+                                let rect = Rect::new(y0, dx0, y1, dx1);
+                                rectis.push((rect, di));
+                            }
+                        }
+                        y0 = y1;
+                    }
+                    x0 = x1;
+                }
+                debug_assert!(rectis.len() == n);
+                rectis.sort_by_cached_key(|(_r, i)| *i);
+                rectis.into_iter().map(|(r, _i)| r).collect::<Vec<_>>()
             }
         }
         impl PartialOrd for State {
@@ -4626,7 +4609,7 @@ mod solver {
         }
         impl Ord for State {
             fn cmp(&self, other: &Self) -> Ordering {
-                self.cost.cmp(&other.cost)
+                self.partial_cmp(other).unwrap()
             }
         }
     }
@@ -4639,7 +4622,7 @@ mod solver {
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
     const GEN_SEED_TIME: u128 = 1_000_000;
-    const QUE_LEN_MAX: usize = 35;
+    const QUE_LEN_MAX: usize = 50;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
@@ -4697,36 +4680,28 @@ mod solver {
         }
         pub fn solve(&self) {
             let bin_ws = self.gen_bin_w();
-            let mut partitionss = vec![];
             let mut statess = vec![];
             for (di, a) in self.a.iter().enumerate() {
-                let states = self.construct(di, a, &bin_ws);
-                let partitions = states
-                    .iter()
-                    .map(|state| Partition::new(&state.rects))
-                    .collect::<Vec<_>>();
+                let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
+                let states = self.construct(lim_t, a, &bin_ws);
                 statess.push(states);
-                partitionss.push(partitions);
             }
             let ans = {
-                const INF: usize = 1usize << 60;
                 let mut dp = statess[0]
                     .iter()
                     .map(|state| state.cost)
                     .collect::<Vec<_>>();
-                let mut trace = vec![vec![]; self.d];
+                let mut trace = statess
+                    .iter()
+                    .map(|states| vec![0; states.len()])
+                    .collect::<Vec<_>>();
                 for (di, trace) in trace.iter_mut().enumerate().skip(1) {
                     let mut pre = vec![INF; statess[di].len()];
                     swap(&mut dp, &mut pre);
-                    for (i0, partition0) in partitionss[di - 1].iter().enumerate() {
-                        for (i1, (state1, partition1)) in
-                            statess[di].iter().zip(partitionss[di].iter()).enumerate()
-                        {
-                            let nxt = pre[i0] + state1.cost + partition0.dist(partition1);
+                    for (i0, state0) in statess[di - 1].iter().enumerate() {
+                        for (i1, state1) in statess[di].iter().enumerate() {
+                            let nxt = pre[i0] + state1.cost + state1.dist(state0, &bin_ws);
                             if dp[i1].chmin(nxt) {
-                                while trace.len() <= i1 {
-                                    trace.push(0);
-                                }
                                 trace[i1] = i0;
                             }
                         }
@@ -4742,13 +4717,15 @@ mod solver {
                 eprintln!("{}", cum.unwrap() + 1);
                 let mut ans = vec![];
                 for di in (0..self.d).rev() {
-                    ans.push(statess[di][piv].rects.clone());
+                    ans.push(statess[di][piv].clone());
                     if di > 0 {
                         piv = trace[di][piv];
                     }
                 }
                 ans.reverse();
-                ans
+                ans.into_iter()
+                    .map(|state| state.into_rects(&bin_ws, self.n))
+                    .collect::<Vec<_>>()
             };
             self.answer(ans);
             /*
@@ -4758,15 +4735,14 @@ mod solver {
             eprintln!("{}", score + 1);
              */
         }
-        fn construct(&self, di: usize, a: &[usize], bin_ws: &[usize]) -> Vec<State> {
+        fn construct(&self, lim_t: u128, a: &[usize], bin_ws: &[usize]) -> Vec<State> {
             let mut rng = ChaChaRng::from_seed([0; 32]);
             let mut order = (0..self.n).rev().collect::<Vec<_>>();
             let mut que = BinaryHeap::new();
-            que.push(self.construct_state(a, bin_ws, &order));
-            let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
+            que.push(State::new(a, bin_ws, &order));
             while self.t0.elapsed().as_micros() < lim_t {
                 order.shuffle(&mut rng);
-                let state = self.construct_state(a, bin_ws, &order);
+                let state = State::new(a, bin_ws, &order);
                 if que.len() < QUE_LEN_MAX {
                     que.push(state);
                 } else if que.peek().unwrap() > &state {
@@ -4780,65 +4756,6 @@ mod solver {
             }
             states.reverse();
             states
-        }
-        fn construct_state(&self, a: &[usize], bin_ws: &[usize], order: &[usize]) -> State {
-            let mut irects = vec![];
-            let mut height = vec![0; bin_ws.len()];
-            let mut over_is = vec![];
-            for &i in order.iter() {
-                let a = a[i];
-                let mut min_cost = None;
-                let mut min_cost_rect = None;
-                let mut min_cost_bi = 0;
-                let mut x0 = 0;
-                for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
-                    let bh = (a + bw - 1) / bw;
-                    let h1 = min(h0 + bh, W);
-                    if h1 > h0 {
-                        let over = bw * (h0 + bh).saturating_sub(W);
-                        let cost = (over, h1);
-                        if min_cost.chmin(cost) {
-                            min_cost_bi = bi;
-                            min_cost_rect = Some(Rect::new(h0, x0, h1, x0 + bw));
-                        }
-                    }
-                    x0 += bw;
-                }
-                if let Some(rect) = min_cost_rect {
-                    height[min_cost_bi] += rect.y1 - rect.y0;
-                    irects.push((i, rect));
-                } else {
-                    over_is.push(i);
-                }
-            }
-            if !over_is.is_empty() {
-                irects.sort_by_cached_key(|(_i, r)| Reverse(r.area()));
-                let (di, drect) = irects.pop().unwrap();
-                over_is.push(di);
-                for (dl, di) in over_is.into_iter().enumerate() {
-                    let rect = Rect::new(drect.y0, drect.x0 + dl, drect.y1, drect.x0 + dl + 1);
-                    irects.push((di, rect));
-                }
-            }
-            assert!(irects.len() == self.n);
-            assert!(irects.iter().all(|(_i, rect)| rect.area() > 0));
-            assert!(irects.iter().all(|(_i, rect)| rect.y1 > rect.y0));
-            assert!(irects.iter().all(|(_i, rect)| rect.x1 > rect.x0));
-            assert!(irects.iter().all(|(_i, rect)| rect.y0 <= W));
-            assert!(irects.iter().all(|(_i, rect)| rect.y1 <= W));
-            assert!(irects.iter().all(|(_i, rect)| rect.x0 <= W));
-            assert!(irects.iter().all(|(_i, rect)| rect.x1 <= W));
-            irects.sort_by_cached_key(|(i, _rect)| *i);
-            let rects = irects
-                .into_iter()
-                .map(|(_i, rect)| rect)
-                .collect::<Vec<_>>();
-            let area_over = a
-                .iter()
-                .zip(rects.iter())
-                .map(|(a, rect)| a.saturating_sub(rect.area()))
-                .sum::<usize>();
-            State::new(area_over, rects)
         }
         fn gen_bin_w(&self) -> Vec<usize> {
             let &amax = self
