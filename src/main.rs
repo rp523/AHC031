@@ -4551,65 +4551,105 @@ mod solver {
                 self.cost
             }
             pub fn dist(&self, other: &Self, bin_ws: &[usize]) -> (usize, Self) {
-                let mut dist = 0;
-                let mut ncols = vec![];
-                let mut nrems = vec![];
-                for (((col1, &rem), col0), bw) in self
+                let mut next_col = vec![vec![vec![]; bin_ws.len()]; bin_ws.len()];
+                let mut next_rem = vec![vec![0; bin_ws.len()]; bin_ws.len()];
+                let mut f = Flow::new(bin_ws.len() + bin_ws.len() + 2);
+                for (ci0, (col0, (next_col, next_rem))) in other
                     .cols
                     .iter()
-                    .zip(self.rems.iter())
-                    .zip(other.cols.iter())
-                    .zip(bin_ws.iter())
+                    .zip(next_col.iter_mut().zip(next_rem.iter_mut()))
+                    .enumerate()
                 {
                     let mut y0s = vec![0];
                     for (bh, _i) in col0.iter() {
                         y0s.push(y0s.last().unwrap() + bh);
                     }
                     let y0s = y0s.into_iter().collect::<BTreeSet<_>>();
-                    let (y1s, ncol, nrem) = {
-                        let mut nrem = rem;
-                        let mut ncol = vec![];
-                        let mut y1s = vec![0];
-                        let mut y0 = 0;
-                        for &(bh, i) in col1.iter() {
-                            let mut y1 = y0 + bh;
-                            if let Some(&ny0) = y0s.greater_equal(&y1) {
-                                if ny0 - y1 <= nrem {
-                                    nrem -= ny0 - y1;
-                                    y1 = ny0;
-                                }
-                            }
-                            y1s.push(y1);
-                            ncol.push((y1 - y0, i));
-                            y0 = y1;
+                    for (ci1, (((col1, mut rem1), (next_col, next_rem)), bw)) in self
+                        .cols
+                        .iter()
+                        .zip(self.rems.iter().copied())
+                        .zip(next_col.iter_mut().zip(next_rem.iter_mut()))
+                        .zip(bin_ws.iter())
+                        .enumerate()
+                    {
+                        if ci0 == bin_ws.len() - 1 && ci1 != bin_ws.len() - 1 {
+                            continue;
                         }
-                        (y1s, ncol, nrem)
-                    };
-                    let mut ys = y0s.into_iter().chain(y1s.into_iter()).collect::<Vec<_>>();
-                    ys.sort();
-                    let mut enc = vec![];
-                    for y in ys {
-                        if let Some(&lst) = enc.last() {
-                            if lst == y {
-                                enc.pop();
+                        let y1s = {
+                            let mut y1s = vec![0];
+                            let mut y0 = 0;
+                            for &(bh, i) in col1.iter() {
+                                let mut y1 = y0 + bh;
+                                if let Some(&ny0) = y0s.greater_equal(&y1) {
+                                    if ny0 - y1 <= rem1 {
+                                        rem1 -= ny0 - y1;
+                                        y1 = ny0;
+                                    }
+                                }
+                                y1s.push(y1);
+                                next_col.push((y1 - y0, i));
+                                y0 = y1;
+                                *next_rem = rem1;
+                            }
+                            y1s
+                        };
+                        let mut ys = y0s
+                            .iter()
+                            .rev()
+                            .skip(1)
+                            .rev()
+                            .copied()
+                            .chain(y1s.into_iter().rev().skip(1).rev())
+                            .collect::<Vec<_>>();
+                        ys.sort();
+                        let mut enc = vec![];
+                        for y in ys {
+                            if let Some(&lst) = enc.last() {
+                                if lst == y {
+                                    enc.pop();
+                                } else {
+                                    enc.push(y);
+                                }
                             } else {
                                 enc.push(y);
                             }
-                        } else {
-                            enc.push(y);
+                        }
+                        let cost = bw * enc.len();
+                        f.add_cost_edge(ci0, bin_ws.len() + ci1, 1, cost as i64);
+                    }
+                }
+                let src = bin_ws.len() * 2;
+                let dst = src + 1;
+                for ci in 0..bin_ws.len() {
+                    f.add_cost_edge(src, ci, 1, 0);
+                    f.add_cost_edge(bin_ws.len() + ci, dst, 1, 0);
+                }
+                let (dist, _flow) = f
+                    .min_cost_flow(src, dst, bin_ws.len() as i64, bin_ws.len() as i64)
+                    .unwrap();
+                let mut ncols = vec![vec![]; bin_ws.len()];
+                let mut nrems = vec![0; bin_ws.len()];
+                let mut cum_dist = 0;
+                for (ci0, e) in f.g.iter().enumerate().take(bin_ws.len()) {
+                    for e in e {
+                        if bin_ws.len() <= e.to && e.to < bin_ws.len() * 2 && e.flow > 0 {
+                            let ci1 = e.to - bin_ws.len();
+                            ncols[ci0] = next_col[ci0][ci1].clone();
+                            nrems[ci0] = next_rem[ci0][ci1];
+                            cum_dist += e.cost;
+                            break;
                         }
                     }
-                    dist += bw * enc.len();
-                    ncols.push(ncol);
-                    nrems.push(nrem);
                 }
+                assert!(dist == cum_dist);
                 let nxt = Self {
                     cost: self.cost,
                     cols: ncols,
                     rems: nrems,
                     over_idxs: self.over_idxs.clone(),
                 };
-                (dist, nxt)
+                (dist as usize, nxt)
             }
             pub fn into_rects(self, bin_ws: &[usize], n: usize) -> Vec<Rect> {
                 let mut rectis = vec![];
@@ -4663,7 +4703,7 @@ mod solver {
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
     const GEN_SEED_TIME: u128 = 1_000_000;
-    const QUE_LEN_MAX: usize = 50;
+    const QUE_LEN_MAX: usize = 25;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
