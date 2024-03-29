@@ -4573,6 +4573,9 @@ mod solver {
                         .zip(bin_ws.iter())
                         .enumerate()
                     {
+                        if ci0 == bin_ws.len() - 1 && ci1 != bin_ws.len() - 1 {
+                            continue;
+                        }
                         let y1s = {
                             let mut y1s = vec![0];
                             let mut y0 = 0;
@@ -4591,7 +4594,14 @@ mod solver {
                             }
                             y1s
                         };
-                        let mut ys = y0s.iter().copied().chain(y1s.into_iter()).collect::<Vec<_>>();
+                        let mut ys = y0s
+                            .iter()
+                            .rev()
+                            .skip(1)
+                            .rev()
+                            .copied()
+                            .chain(y1s.into_iter().rev().skip(1).rev())
+                            .collect::<Vec<_>>();
                         ys.sort();
                         let mut enc = vec![];
                         for y in ys {
@@ -4693,7 +4703,7 @@ mod solver {
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
     const GEN_SEED_TIME: u128 = 1_000_000;
-    const QUE_LEN_MAX: usize = 50;
+    const QUE_LEN_MAX: usize = 25;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
