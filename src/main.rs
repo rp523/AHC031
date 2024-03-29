@@ -4539,6 +4539,8 @@ mod solver {
                     .iter()
                     .map(|col| W - col.iter().map(|(dh, _i)| *dh).sum::<usize>())
                     .collect::<Vec<_>>();
+                cols.iter_mut()
+                    .for_each(|col| col.sort_by_cached_key(|(bh, _i)| *bh));
                 Self {
                     cost: area_over * 100,
                     cols,
