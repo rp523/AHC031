@@ -4471,9 +4471,10 @@ mod solver {
         use super::*;
         #[derive(Clone, PartialEq, Eq)]
         pub struct State {
-            pub cost: usize,
-            pub cols: Vec<Vec<(usize, usize)>>, // bh, ai
-            pub over_idxs: Vec<usize>,
+            cost: usize,
+            cols: Vec<Vec<(usize, usize)>>, // bh, ai
+            rems: Vec<usize>,
+            over_idxs: Vec<usize>,
         }
         impl State {
             pub fn new(a: &[usize], bin_ws: &[usize], order: &[usize]) -> Self {
@@ -4534,24 +4535,56 @@ mod solver {
                             .sum::<usize>()
                     })
                     .sum::<usize>();
+                let rems = cols
+                    .iter()
+                    .map(|col| W - col.iter().map(|(dh, _i)| *dh).sum::<usize>())
+                    .collect::<Vec<_>>();
                 Self {
                     cost: area_over * 100,
                     cols,
+                    rems,
                     over_idxs,
                 }
             }
-            pub fn dist(&self, other: &Self, bin_ws: &[usize]) -> usize {
+            #[inline(always)]
+            pub fn cost(&self) -> usize {
+                self.cost
+            }
+            pub fn dist(&self, other: &Self, bin_ws: &[usize]) -> (usize, Self) {
                 let mut dist = 0;
-                for ((col1, col0), bw) in self.cols.iter().zip(other.cols.iter()).zip(bin_ws.iter())
+                let mut ncols = vec![];
+                let mut nrems = vec![];
+                for (((col1, &rem), col0), bw) in self
+                    .cols
+                    .iter()
+                    .zip(self.rems.iter())
+                    .zip(other.cols.iter())
+                    .zip(bin_ws.iter())
                 {
                     let mut y0s = vec![0];
                     for (bh, _i) in col0.iter() {
                         y0s.push(y0s.last().unwrap() + bh);
                     }
-                    let mut y1s = vec![0];
-                    for (bh, _i) in col1.iter() {
-                        y1s.push(y1s.last().unwrap() + bh);
-                    }
+                    let y0s = y0s.into_iter().collect::<BTreeSet<_>>();
+                    let (y1s, ncol, nrem) = {
+                        let mut nrem = rem;
+                        let mut ncol = vec![];
+                        let mut y1s = vec![0];
+                        let mut y0 = 0;
+                        for &(bh, i) in col1.iter() {
+                            let mut y1 = y0 + bh;
+                            if let Some(&ny0) = y0s.greater_equal(&y1) {
+                                if ny0 - y1 <= nrem {
+                                    nrem -= ny0 - y1;
+                                    y1 = ny0;
+                                }
+                            }
+                            y1s.push(y1);
+                            ncol.push((y1 - y0, i));
+                            y0 = y1;
+                        }
+                        (y1s, ncol, nrem)
+                    };
                     let mut ys = y0s.into_iter().chain(y1s.into_iter()).collect::<Vec<_>>();
                     ys.sort();
                     let mut enc = vec![];
@@ -4567,8 +4600,16 @@ mod solver {
                         }
                     }
                     dist += bw * enc.len();
+                    ncols.push(ncol);
+                    nrems.push(nrem);
                 }
-                dist
+                let nxt = Self {
+                    cost: self.cost,
+                    cols: ncols,
+                    rems: nrems,
+                    over_idxs: self.over_idxs.clone(),
+                };
+                (dist, nxt)
             }
             pub fn into_rects(self, bin_ws: &[usize], n: usize) -> Vec<Rect> {
                 let mut rectis = vec![];
@@ -4686,10 +4727,11 @@ mod solver {
                 let states = self.construct(lim_t, a, &bin_ws);
                 statess.push(states);
             }
+            let mut ans_statess = statess.clone();
             let ans = {
                 let mut dp = statess[0]
                     .iter()
-                    .map(|state| state.cost)
+                    .map(|state| state.cost())
                     .collect::<Vec<_>>();
                 let mut trace = statess
                     .iter()
@@ -4698,11 +4740,14 @@ mod solver {
                 for (di, trace) in trace.iter_mut().enumerate().skip(1) {
                     let mut pre = vec![INF; statess[di].len()];
                     swap(&mut dp, &mut pre);
-                    for (i0, state0) in statess[di - 1].iter().enumerate() {
-                        for (i1, state1) in statess[di].iter().enumerate() {
-                            let nxt = pre[i0] + state1.cost + state1.dist(state0, &bin_ws);
+                    for i0 in 0..statess[di - 1].len() {
+                        for i1 in 0..statess[di].len() {
+                            let (delta, nstate1) =
+                                statess[di][i1].dist(&ans_statess[di - 1][i0], &bin_ws);
+                            let nxt = pre[i0] + statess[di][i1].cost() + delta;
                             if dp[i1].chmin(nxt) {
                                 trace[i1] = i0;
+                                ans_statess[di][i1] = nstate1;
                             }
                         }
                     }
@@ -4717,7 +4762,7 @@ mod solver {
                 eprintln!("{}", cum.unwrap() + 1);
                 let mut ans = vec![];
                 for di in (0..self.d).rev() {
-                    ans.push(statess[di][piv].clone());
+                    ans.push(ans_statess[di][piv].clone());
                     if di > 0 {
                         piv = trace[di][piv];
                     }
