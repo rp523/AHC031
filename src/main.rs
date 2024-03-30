@@ -4678,8 +4678,6 @@ mod solver {
                     .iter()
                     .map(|col| W - col.iter().map(|(dh, _i)| *dh).sum::<usize>())
                     .collect::<Vec<_>>();
-                cols.iter_mut()
-                    .for_each(|col| col.sort_by_cached_key(|(bh, _i)| *bh));
                 Self {
                     cost: area_over * 100,
                     cols,
@@ -4705,8 +4703,11 @@ mod solver {
                     for (bh, _i) in col0.iter() {
                         y0s.push(y0s.last().unwrap() + bh);
                     }
+                    if y0s.last().unwrap() != &W {
+                        y0s.push(W);
+                    }
                     let y0s = y0s.into_iter().collect::<BTreeSet<_>>();
-                    for (ci1, (((col1, mut rem1), (next_col, next_rem)), bw)) in self
+                    for (ci1, (((col1, rem1), (next_col, next_rem)), bw)) in self
                         .cols
                         .iter()
                         .zip(self.rems.iter().copied())
@@ -4717,10 +4718,17 @@ mod solver {
                         if bin_ws[ci0] != bin_ws[ci1] {
                             continue;
                         }
-                        let y1s = {
+                        fn bottom_up(
+                            col1: &[(usize, usize)],
+                            y0s: &BTreeSet<usize>,
+                            mut rem1: usize,
+                        ) -> (usize, usize, Vec<usize>, Vec<(usize, usize)>)
+                        {
                             let mut cands = col1.iter().copied().collect::<BTreeSet<_>>();
                             let mut y1s = vec![0];
                             let mut y0 = 0;
+                            let mut next_col = vec![];
+                            let mut overlap = 0;
                             while !cands.is_empty() {
                                 let mut min_sub = None;
                                 let mut min_sub_bhi = *cands.first().unwrap();
@@ -4737,29 +4745,92 @@ mod solver {
                                     }
                                 }
                                 let (bh, i) = min_sub_bhi;
-                                let mut y1 = y0 + bh;
-                                if let Some(&ny0) = y0s.greater_equal(&y1) {
-                                    let sb = ny0 - y1;
-                                    if sb <= rem1 {
-                                        rem1 -= sb;
-                                        y1 = ny0;
+                                let y1 = if cands.len() > 1 {
+                                    let mut y1 = y0 + bh;
+                                    if let Some(&ny0) = y0s.greater_equal(&y1) {
+                                        let sb = ny0 - y1;
+                                        if sb <= rem1 {
+                                            // adjustable
+                                            overlap += 1;
+                                            rem1 -= sb;
+                                            y1 = ny0;
+                                        }
                                     }
-                                }
+                                    y1
+                                } else {
+                                    W
+                                };
                                 y1s.push(y1);
                                 next_col.push((y1 - y0, i));
                                 y0 = y1;
                                 assert!(cands.remove(&(bh, i)));
                             }
-                            y1s
+                            (overlap, rem1, y1s, next_col)
+                        }
+                        fn top_down(
+                            col1: &[(usize, usize)],
+                            y0s: &BTreeSet<usize>,
+                            mut rem1: usize,
+                        ) -> (usize, usize, Vec<usize>, Vec<(usize, usize)>)
+                        {
+                            let mut cands = col1.iter().copied().collect::<BTreeSet<_>>();
+                            let mut y1s = vec![W];
+                            let mut y1 = W;
+                            let mut next_col = vec![];
+                            let mut overlap = 0;
+                            while !cands.is_empty() {
+                                let mut min_sub = None;
+                                let mut min_sub_bhi = *cands.last().unwrap();
+                                for &(bh, i) in cands.iter() {
+                                    let y0 = y1 - bh;
+                                    if let Some(&ny1) = y0s.less_equal(&y0) {
+                                        let sb = y0 - ny1;
+                                        if sb <= rem1 {
+                                            // adjustable
+                                            if min_sub.chmin(sb) {
+                                                min_sub_bhi = (bh, i);
+                                            }
+                                        }
+                                    }
+                                }
+                                let (bh, i) = min_sub_bhi;
+                                let y0 = if cands.len() > 1 {
+                                    let mut y0 = y1 - bh;
+                                    if let Some(&ny1) = y0s.less_equal(&y0) {
+                                        let sb = y0 - ny1;
+                                        if sb <= rem1 {
+                                            // adjustable
+                                            overlap += 1;
+                                            rem1 -= sb;
+                                            y0 = ny1;
+                                        }
+                                    }
+                                    y0
+                                } else {
+                                    0
+                                };
+                                y1s.push(y0);
+                                next_col.push((y1 - y0, i));
+                                y1 = y0;
+                                assert!(cands.remove(&(bh, i)));
+                            }
+                            next_col.reverse();
+                            (overlap, rem1, y1s, next_col)
+                        }
+                        let (overlap0, nrem0, y1s0, ncol0) = bottom_up(&col1, &y0s, rem1);
+                        let (overlap1, nrem1, y1s1, ncol1) = top_down(&col1, &y0s, rem1);
+                        let (nrem, y1s, ncol) = if overlap0 >= overlap1 {
+                            (nrem0, y1s0, ncol0)
+                        } else {
+                            (nrem1, y1s1, ncol1)
                         };
-                        *next_rem = rem1;
+                        *next_rem = nrem;
+                        *next_col = ncol;
                         let mut ys = y0s
                             .iter()
-                            .rev()
-                            .skip(1)
-                            .rev()
                             .copied()
-                            .chain(y1s.into_iter().rev().skip(1).rev())
+                            .chain(y1s.into_iter())
+                            .filter(|&y| y != 0 && y != W)
                             .collect::<Vec<_>>();
                         ys.sort();
                         let mut enc = vec![];
