@@ -4465,6 +4465,145 @@ mod solver {
         }
     }
     use rect::Rect;
+
+    mod partition {
+        use super::*;
+        #[derive(Clone, PartialEq, Eq)]
+        pub struct Partition {
+            hs: BTreeMap<usize, Vec<usize>>,
+            vs: BTreeMap<usize, Vec<usize>>,
+        }
+        impl Partition {
+            pub fn new(rects: &[Rect]) -> Self {
+                let mut hps = BTreeMap::new();
+                let mut vps = BTreeMap::new();
+                for r in rects.iter() {
+                    *hps.entry(r.y0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x0)
+                        .or_insert(0) += 1;
+                    *hps.entry(r.y0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x1)
+                        .or_insert(0) -= 1;
+                    *hps.entry(r.y1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x0)
+                        .or_insert(0) += 1;
+                    *hps.entry(r.y1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.x1)
+                        .or_insert(0) -= 1;
+                    *vps.entry(r.x0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y0)
+                        .or_insert(0) += 1;
+                    *vps.entry(r.x0)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y1)
+                        .or_insert(0) -= 1;
+                    *vps.entry(r.x1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y0)
+                        .or_insert(0) += 1;
+                    *vps.entry(r.x1)
+                        .or_insert(BTreeMap::new())
+                        .entry(r.y1)
+                        .or_insert(0) -= 1;
+                }
+                let mut hs = BTreeMap::new();
+                for (y, xs) in hps {
+                    if y == 0 || y == W {
+                        continue;
+                    }
+                    let mut v = 0;
+                    let mut x0 = 0;
+                    for (x, dv) in xs {
+                        if dv == 0 {
+                            continue;
+                        }
+                        if v == 0 {
+                            debug_assert!(dv > 0);
+                            x0 = x;
+                        }
+                        v += dv;
+                        if v == 0 {
+                            debug_assert!(dv < 0);
+                            hs.entry(y).or_insert(vec![]).push(x0);
+                            hs.entry(y).or_insert(vec![]).push(x);
+                        }
+                    }
+                }
+                let mut vs = BTreeMap::new();
+                for (x, ys) in vps {
+                    if x == 0 || x == W {
+                        continue;
+                    }
+                    let mut v = 0;
+                    let mut y0 = 0;
+                    for (y, dv) in ys {
+                        if dv == 0 {
+                            continue;
+                        }
+                        if v == 0 {
+                            debug_assert!(dv > 0);
+                            y0 = x;
+                        }
+                        v += dv;
+                        if v == 0 {
+                            debug_assert!(dv < 0);
+                            vs.entry(x).or_insert(vec![]).push(y0);
+                            vs.entry(x).or_insert(vec![]).push(y);
+                        }
+                    }
+                }
+                Self { hs, vs }
+            }
+            pub fn dist(&self, rhs: &Self) -> usize {
+                let mut dist = 0;
+                {
+                    let mut hs = BTreeMap::new();
+                    for (y, xs) in self.hs.iter().chain(rhs.hs.iter()) {
+                        for &x in xs {
+                            hs.entry(y).or_insert(vec![]).push(x);
+                        }
+                    }
+                    for (_x, mut xs) in hs {
+                        xs.sort();
+                        let mut x0 = 0;
+                        for (i, x) in xs.into_iter().enumerate() {
+                            if i % 2 == 0 {
+                                x0 = x;
+                            } else {
+                                dist += x - x0;
+                            }
+                        }
+                    }
+                }
+                {
+                    let mut vs = BTreeMap::new();
+                    for (x, ys) in self.vs.iter().chain(rhs.vs.iter()) {
+                        for &y in ys {
+                            vs.entry(x).or_insert(vec![]).push(y);
+                        }
+                    }
+                    for (_x, mut ys) in vs {
+                        ys.sort();
+                        let mut y0 = 0;
+                        for (i, y) in ys.into_iter().enumerate() {
+                            if i % 2 == 0 {
+                                y0 = y;
+                            } else {
+                                dist += y - y0;
+                            }
+                        }
+                    }
+                }
+                dist
+            }
+        }
+    }
+    use partition::Partition;
     pub struct Solver {
         t0: Instant,
         d: usize,
@@ -4501,13 +4640,7 @@ mod solver {
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
-            Self {
-                t0,
-                d,
-                n,
-                a,
-                divs,
-            }
+            Self { t0, d, n, a, divs }
         }
         fn pyramid(&self, _a: &[usize], divs: &[Vec<(usize, usize)>]) -> Vec<Rect> {
             let mut right_y0x0 = BTreeMap::new();
@@ -4621,20 +4754,35 @@ mod solver {
                     rects.push(rect.clone());
                 }
             }
+            rects.sort_by_cached_key(|r| r.area());
             debug_assert!(rects.len() == divs.len());
             rects
         }
         pub fn solve(&self) {
             let mut ans = vec![];
+            let mut pre_partition = None;
+            let mut cost_sum = 0;
             for (a, divs) in self.a.iter().zip(self.divs.iter()) {
                 let rects = self.pyramid(a, divs);
+                let area_over = a
+                    .iter()
+                    .zip(rects.iter())
+                    .map(|(a, rect)| a.saturating_sub(rect.area()))
+                    .sum::<usize>();
+                cost_sum += 100 * area_over;
+                let partition = Partition::new(&rects);
+                if let Some(pre_partition) = pre_partition {
+                    let delta = partition.dist(&pre_partition);
+                    cost_sum += delta;
+                }
+                pre_partition = Some(partition);
                 ans.push(rects);
             }
             self.answer(ans);
+            eprintln!("{cost_sum}");
         }
         fn answer(&self, rects: Vec<Vec<Rect>>) {
-            for mut rects in rects {
-                rects.sort_by_cached_key(|r| r.area());
+            for rects in rects {
                 for rect in rects {
                     debug_assert!(rect.y0.clamp(0, W) == rect.y0);
                     debug_assert!(rect.x0.clamp(0, W) == rect.x0);
