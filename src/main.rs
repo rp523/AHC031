@@ -4382,6 +4382,7 @@ fn main() {
 mod solver {
     use super::*;
 
+    const W: usize = 1000;
     const LEFT: usize = 0;
     const RIGHT: usize = 1;
     const LOWER: usize = 2;
@@ -4466,7 +4467,6 @@ mod solver {
     use rect::Rect;
     pub struct Solver {
         t0: Instant,
-        w: usize,
         d: usize,
         n: usize,
         a: Vec<Vec<usize>>,
@@ -4475,7 +4475,7 @@ mod solver {
     impl Solver {
         pub fn new() -> Self {
             let t0 = Instant::now();
-            let w = read::<usize>();
+            let _w = read::<usize>();
             let d = read::<usize>();
             let n = read::<usize>();
             let a = read_mat::<usize>(d, n);
@@ -4485,10 +4485,10 @@ mod solver {
                     a.iter()
                         .map(|&a| {
                             let mut hws = vec![];
-                            for (y, x) in (1..=w)
+                            for (y, x) in (1..=W)
                                 .take_while(|&y| y * y <= a)
                                 .map(|y| (y, (a + y - 1) / y))
-                                .filter(|&(_y, x)| x <= w)
+                                .filter(|&(_y, x)| x <= W)
                             {
                                 hws.push((y, x));
                                 if y != x {
@@ -4503,7 +4503,6 @@ mod solver {
                 .collect::<Vec<_>>();
             Self {
                 t0,
-                w,
                 d,
                 n,
                 a,
@@ -4516,8 +4515,8 @@ mod solver {
             let mut rems = vec![];
             // from right top
             {
-                let mut y1 = self.w;
-                let mut lim_bw = self.w;
+                let mut y1 = W;
+                let mut lim_bw = W;
                 for divs in divs.iter().rev() {
                     // from big to small
                     let mut ok = false;
@@ -4526,13 +4525,13 @@ mod solver {
                             continue;
                         }
                         let y0 = y1 - bh;
-                        let x1 = self.w; // fixed
+                        let x1 = W; // fixed
                         let x0 = x1 - bw;
                         let rect = Rect::new(y0, x0, y1, x1);
-                        debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                        debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                        debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                        debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                        debug_assert!(rect.y0.clamp(0, W) == rect.y0);
+                        debug_assert!(rect.x0.clamp(0, W) == rect.x0);
+                        debug_assert!(rect.y1.clamp(0, W) == rect.y1);
+                        debug_assert!(rect.x1.clamp(0, W) == rect.x1);
                         rects.push(rect);
                         right_y0x0.insert(y0, x0);
                         lim_bw.chmin(bw);
@@ -4549,7 +4548,7 @@ mod solver {
                     }
                 }
                 if !right_y0x0.contains_key(&0) {
-                    right_y0x0.insert(0, self.w);
+                    right_y0x0.insert(0, W);
                 }
             }
             let right_y0x0 = right_y0x0;
@@ -4561,7 +4560,7 @@ mod solver {
                         let mut ok = false;
                         for &(bh, bw) in divs.iter() {
                             let y1 = y0 + bh;
-                            if y1 > self.w {
+                            if y1 > W {
                                 break;
                             }
                             let x0 = 0; // fixed
@@ -4571,10 +4570,10 @@ mod solver {
                                 continue;
                             }
                             let rect = Rect::new(y0, x0, y1, x1);
-                            debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                            debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                            debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                            debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                            debug_assert!(rect.y0.clamp(0, W) == rect.y0);
+                            debug_assert!(rect.x0.clamp(0, W) == rect.x0);
+                            debug_assert!(rect.y1.clamp(0, W) == rect.y1);
+                            debug_assert!(rect.x1.clamp(0, W) == rect.x1);
                             rects.push(rect);
                             rems.push((y0, x1, LEFT));
                             ok = true;
@@ -4585,7 +4584,7 @@ mod solver {
                             break;
                         }
                     }
-                    if y0 < self.w {
+                    if y0 < W {
                         rems.push((y0, 0, LEFT));
                     }
                 }
@@ -4593,7 +4592,7 @@ mod solver {
                 // ascending order from last
                 rems.sort_by_cached_key(|(y, _x, _lr)| Reverse(*y));
                 let mut x0 = 0;
-                let mut x1 = self.w;
+                let mut x1 = W;
                 let mut y0 = 0;
                 while let Some((y1, x, lr)) = rems.pop() {
                     let dh = y1 - y0;
@@ -4615,10 +4614,10 @@ mod solver {
                 }
                 cands.sort_by_cached_key(|rect| rect.area());
                 for rect in cands.iter().rev().take(divs.len() - rects.len()) {
-                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                    debug_assert!(rect.y0.clamp(0, W) == rect.y0);
+                    debug_assert!(rect.x0.clamp(0, W) == rect.x0);
+                    debug_assert!(rect.y1.clamp(0, W) == rect.y1);
+                    debug_assert!(rect.x1.clamp(0, W) == rect.x1);
                     rects.push(rect.clone());
                 }
             }
@@ -4637,10 +4636,10 @@ mod solver {
             for mut rects in rects {
                 rects.sort_by_cached_key(|r| r.area());
                 for rect in rects {
-                    debug_assert!(rect.y0.clamp(0, self.w) == rect.y0);
-                    debug_assert!(rect.x0.clamp(0, self.w) == rect.x0);
-                    debug_assert!(rect.y1.clamp(0, self.w) == rect.y1);
-                    debug_assert!(rect.x1.clamp(0, self.w) == rect.x1);
+                    debug_assert!(rect.y0.clamp(0, W) == rect.y0);
+                    debug_assert!(rect.x0.clamp(0, W) == rect.x0);
+                    debug_assert!(rect.y1.clamp(0, W) == rect.y1);
+                    debug_assert!(rect.x1.clamp(0, W) == rect.x1);
                     println!("{} {} {} {}", rect.y0, rect.x0, rect.y1, rect.x1);
                 }
             }
