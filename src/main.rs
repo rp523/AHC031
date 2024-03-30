@@ -5038,8 +5038,8 @@ mod solver {
             }
             let mut rem = W;
             let mut bin_w = vec![];
-            loop {
-                if rem > unit * 2 {
+            while rem > 0 {
+                if rem >= unit {
                     rem -= unit;
                     bin_w.push(unit);
                 } else {
