@@ -4390,7 +4390,7 @@ mod solver {
     const UPPER: usize = 3;
     mod rect {
         use super::*;
-        #[derive(Clone, Copy, PartialEq, Eq)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         pub struct Rect {
             pub y0: usize,
             pub x0: usize,
@@ -4552,11 +4552,11 @@ mod solver {
             pub fn cost(&self) -> usize {
                 self.cost
             }
-            pub fn dist(&self, other: &Self, bin_ws: &[usize]) -> (usize, Self) {
+            pub fn nearest(&self, pre: &Self, bin_ws: &[usize]) -> Self {
                 let mut next_col = vec![vec![vec![]; bin_ws.len()]; bin_ws.len()];
                 let mut next_rem = vec![vec![0; bin_ws.len()]; bin_ws.len()];
                 let mut f = Flow::new(bin_ws.len() + bin_ws.len() + 2);
-                for (ci0, (col0, (next_col, next_rem))) in other
+                for (ci0, (col0, (next_col, next_rem))) in pre
                     .cols
                     .iter()
                     .zip(next_col.iter_mut().zip(next_rem.iter_mut()))
@@ -4632,42 +4632,38 @@ mod solver {
                     .unwrap();
                 let mut ncols = vec![vec![]; bin_ws.len()];
                 let mut nrems = vec![0; bin_ws.len()];
-                let mut cum_dist = 0;
                 for (ci0, e) in f.g.iter().enumerate().take(bin_ws.len()) {
                     for e in e {
                         if bin_ws.len() <= e.to && e.to < bin_ws.len() * 2 && e.flow > 0 {
                             let ci1 = e.to - bin_ws.len();
                             ncols[ci0] = next_col[ci0][ci1].clone();
                             nrems[ci0] = next_rem[ci0][ci1];
-                            cum_dist += e.cost;
                             break;
                         }
                     }
                 }
-                assert!(dist == cum_dist);
-                let nxt = Self {
-                    cost: self.cost,
+                Self {
+                    cost: pre.cost + dist as usize + self.cost,
                     cols: ncols,
                     rems: nrems,
                     over_idxs: self.over_idxs.clone(),
-                };
-                (dist as usize, nxt)
+                }
             }
-            pub fn into_rects(self, bin_ws: &[usize], n: usize) -> Vec<Rect> {
+            pub fn to_rects(&self, bin_ws: &[usize], n: usize) -> Vec<Rect> {
                 let mut rectis = vec![];
                 let mut x0 = 0;
-                for (col, &bw) in self.cols.into_iter().zip(bin_ws.iter()) {
+                for (col, &bw) in self.cols.iter().zip(bin_ws.iter()) {
                     let mut y0 = 0;
                     let x1 = x0 + bw;
                     for (bh, i) in col {
                         let y1 = y0 + bh;
-                        if i < n {
+                        if *i < n {
                             let rect = Rect::new(y0, x0, y1, x1);
-                            rectis.push((rect, i));
+                            rectis.push((rect, *i));
                         } else {
                             for (dl, &di) in self.over_idxs.iter().enumerate() {
                                 let dx0 = x0 + dl;
-                                let dx1 = if di == self.over_idxs.len() - 1 {
+                                let dx1 = if dl == self.over_idxs.len() - 1 {
                                     x1
                                 } else {
                                     dx0 + 1
@@ -4704,8 +4700,8 @@ mod solver {
         a: Vec<Vec<usize>>,
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
-    const GEN_SEED_TIME: u128 = 1_000_000;
-    const QUE_LEN_MAX: usize = 25;
+    const GEN_SEED_TIME: u128 = 2_500_000;
+    const QUE_LEN_MAX: usize = 50;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
             for mut rects in rects {
@@ -4763,56 +4759,41 @@ mod solver {
         }
         pub fn solve(&self) {
             let bin_ws = self.gen_bin_w();
-            let mut statess = vec![];
+            let mut statess: Vec<Vec<(State, usize)>> = vec![];
             for (di, a) in self.a.iter().enumerate() {
                 let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
-                let states = self.construct(lim_t, a, &bin_ws);
+                let states = self.construct(
+                    lim_t,
+                    a,
+                    &bin_ws,
+                    if di == 0 {
+                        None
+                    } else {
+                        Some(&statess[di - 1])
+                    },
+                );
                 statess.push(states);
             }
-            let mut ans_statess = statess.clone();
             let ans = {
-                let mut dp = statess[0]
-                    .iter()
-                    .map(|state| state.cost())
-                    .collect::<Vec<_>>();
-                let mut trace = statess
-                    .iter()
-                    .map(|states| vec![0; states.len()])
-                    .collect::<Vec<_>>();
-                for (di, trace) in trace.iter_mut().enumerate().skip(1) {
-                    let mut pre = vec![INF; statess[di].len()];
-                    swap(&mut dp, &mut pre);
-                    for i0 in 0..statess[di - 1].len() {
-                        for i1 in 0..statess[di].len() {
-                            let (delta, nstate1) =
-                                statess[di][i1].dist(&ans_statess[di - 1][i0], &bin_ws);
-                            let nxt = pre[i0] + statess[di][i1].cost() + delta;
-                            if dp[i1].chmin(nxt) {
-                                trace[i1] = i0;
-                                ans_statess[di][i1] = nstate1;
-                            }
-                        }
-                    }
-                }
                 let mut piv = 0;
                 let mut cum = None;
-                for (i, dp) in dp.into_iter().enumerate() {
-                    if cum.chmin(dp) {
+                for (i, (lstate, _)) in statess[self.d - 1].iter().enumerate() {
+                    if cum.chmin(lstate.cost()) {
                         piv = i;
                     }
                 }
                 eprintln!("{}", cum.unwrap() + 1);
                 let mut ans = vec![];
                 for di in (0..self.d).rev() {
-                    ans.push(ans_statess[di][piv].clone());
+                    let (bstate, pi) = &statess[di][piv];
+                    let rects = bstate.to_rects(&bin_ws, self.n);
+                    ans.push(rects);
                     if di > 0 {
-                        piv = trace[di][piv];
+                        piv = *pi;
                     }
                 }
                 ans.reverse();
-                ans.into_iter()
-                    .map(|state| state.into_rects(&bin_ws, self.n))
-                    .collect::<Vec<_>>()
+                ans
             };
             self.answer(ans);
             /*
@@ -4822,21 +4803,46 @@ mod solver {
             eprintln!("{}", score + 1);
              */
         }
-        fn construct(&self, lim_t: u128, a: &[usize], bin_ws: &[usize]) -> Vec<State> {
+        fn construct(
+            &self,
+            lim_t: u128,
+            a: &[usize],
+            bin_ws: &[usize],
+            pre: Option<&[(State, usize)]>,
+        ) -> Vec<(State, usize)> {
             let mut rng = ChaChaRng::from_seed([0; 32]);
             let mut order = (0..self.n).rev().collect::<Vec<_>>();
             let mut que = BinaryHeap::new();
-            que.push(State::new(a, bin_ws, &order));
+            let mut _tri = 0;
+            let mut ev_seed = INF;
             while self.t0.elapsed().as_micros() < lim_t {
-                order.shuffle(&mut rng);
-                let state = State::new(a, bin_ws, &order);
-                if que.len() < QUE_LEN_MAX {
-                    que.push(state);
-                } else if que.peek().unwrap() > &state {
-                    que.pop();
-                    que.push(state);
+                _tri += 1;
+                let seed = State::new(a, bin_ws, &order);
+                if ev_seed * 2 >= seed.cost() {
+                    ev_seed.chmin(seed.cost());
+                    let statei = if let Some(pre) = pre {
+                        let mut ev_cum = None;
+                        let mut nstatei = None;
+                        for (pi, (pstate, _)) in pre.iter().enumerate() {
+                            let state = seed.nearest(pstate, bin_ws);
+                            if ev_cum.chmin(state.cost()) {
+                                nstatei = Some((state, pi));
+                            }
+                        }
+                        nstatei.unwrap()
+                    } else {
+                        (seed, 0)
+                    };
+                    if que.len() < QUE_LEN_MAX {
+                        que.push(statei);
+                    } else if que.peek().unwrap() > &statei {
+                        que.pop();
+                        que.push(statei);
+                    }
                 }
+                order.shuffle(&mut rng);
             }
+            //eprintln!("{_tri}");
             let mut states = vec![];
             while let Some(state) = que.pop() {
                 states.push(state);
