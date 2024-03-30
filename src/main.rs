@@ -4714,27 +4714,45 @@ mod solver {
                         .zip(bin_ws.iter())
                         .enumerate()
                     {
-                        if ci0 == bin_ws.len() - 1 && ci1 != bin_ws.len() - 1 {
+                        if bin_ws[ci0] != bin_ws[ci1] {
                             continue;
                         }
                         let y1s = {
+                            let mut cands = col1.iter().copied().collect::<BTreeSet<_>>();
                             let mut y1s = vec![0];
                             let mut y0 = 0;
-                            for &(bh, i) in col1.iter() {
+                            while !cands.is_empty() {
+                                let mut min_sub = None;
+                                let mut min_sub_bhi = *cands.first().unwrap();
+                                for &(bh, i) in cands.iter() {
+                                    let y1 = y0 + bh;
+                                    if let Some(&ny0) = y0s.greater_equal(&y1) {
+                                        let sb = ny0 - y1;
+                                        if sb <= rem1 {
+                                            // adjustable
+                                            if min_sub.chmin(sb) {
+                                                min_sub_bhi = (bh, i);
+                                            }
+                                        }
+                                    }
+                                }
+                                let (bh, i) = min_sub_bhi;
                                 let mut y1 = y0 + bh;
                                 if let Some(&ny0) = y0s.greater_equal(&y1) {
-                                    if ny0 - y1 <= rem1 {
-                                        rem1 -= ny0 - y1;
+                                    let sb = ny0 - y1;
+                                    if sb <= rem1 {
+                                        rem1 -= sb;
                                         y1 = ny0;
                                     }
                                 }
                                 y1s.push(y1);
                                 next_col.push((y1 - y0, i));
                                 y0 = y1;
-                                *next_rem = rem1;
+                                assert!(cands.remove(&(bh, i)));
                             }
                             y1s
                         };
+                        *next_rem = rem1;
                         let mut ys = y0s
                             .iter()
                             .rev()
