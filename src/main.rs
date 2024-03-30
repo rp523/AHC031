@@ -4626,24 +4626,24 @@ mod solver {
                     let a = a[i];
                     let mut min_cost = None;
                     let mut min_cost_bih1 = (bin_ws.len(), 0);
-                    for (bi, (&bw, &h0)) in bin_ws.iter().zip(height.iter()).enumerate() {
+                    for (bi, (&bw, &y0)) in bin_ws.iter().zip(height.iter()).enumerate() {
                         let bh = (a + bw - 1) / bw;
-                        let h1 = min(h0 + bh, W);
-                        if h1 > h0 {
-                            let over = bw * (h0 + bh).saturating_sub(W);
-                            let cost = (over, h1);
+                        let y1 = min(y0 + bh, W);
+                        if y1 > y0 {
+                            let over = a.saturating_sub(bw * (y1 - y0));
+                            let cost = (over, y1);
                             if min_cost.chmin(cost) {
-                                min_cost_bih1 = (bi, h1);
+                                min_cost_bih1 = (bi, y1);
                             }
                         }
                     }
-                    let (bi, h1) = min_cost_bih1;
+                    let (bi, y1) = min_cost_bih1;
                     if bi < bin_ws.len() {
-                        let h0 = height[bi];
-                        height[bi] = h1;
-                        cols[bi].push((h1 - h0, i));
+                        let y0 = height[bi];
+                        height[bi] = y1;
+                        cols[bi].push((y1 - y0, i));
                         let bw = bin_ws[bi];
-                        if min_area.chmin(bw * (h1 - h0)) {
+                        if min_area.chmin(bw * (y1 - y0)) {
                             min_area_at = (bi, cols[bi].len() - 1);
                         }
                     } else {
