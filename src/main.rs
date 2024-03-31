@@ -4685,6 +4685,14 @@ mod solver {
                     over_idxs,
                 }
             }
+            pub fn extend(&mut self) {
+                self.cols.iter_mut().for_each(|col| {
+                    let col_sum = col.iter().map(|(bh, _i)| bh).sum::<usize>();
+                    if let Some((bh, _i)) = col.iter_mut().next_back() {
+                        *bh = W - (col_sum - *bh);
+                    }
+                });
+            }
             #[inline(always)]
             pub fn cost(&self) -> usize {
                 self.cost
@@ -5049,7 +5057,7 @@ mod solver {
             let mut ev_seed = INF;
             while self.t0.elapsed().as_micros() < lim_t {
                 _tri += 1;
-                let seed = State::new(a, bin_ws, &order);
+                let mut seed = State::new(a, bin_ws, &order);
                 if ev_seed * 2 >= seed.cost() {
                     ev_seed.chmin(seed.cost());
                     let statei = if let Some(pre) = pre {
@@ -5063,6 +5071,7 @@ mod solver {
                         }
                         nstatei.unwrap()
                     } else {
+                        seed.extend();
                         (seed, 0)
                     };
                     if que.len() < QUE_LEN_MAX {
@@ -5267,7 +5276,7 @@ mod solver {
                 remains.remove(&mi);
                 let mut min_trash_rate = None;
                 let mut cols = vec![];
-                for bw in (1..).take_while(|&sqbw| sqbw < W / 4) { 
+                for bw in (1..).take_while(|&sqbw| sqbw < W / 4) {
                     let max_blk_bh = (a[mi] + bw - 1) / bw;
                     if max_blk_bh > W {
                         continue;
@@ -5279,7 +5288,10 @@ mod solver {
                     let mut min_trash_at = (0, max_blk_bh);
                     for (pi, ai) in remains.iter().copied().rev().enumerate() {
                         let ni = pi + 1;
-                        let py_ptrash = dp[pi].iter().map(|(pi, ptrash)| (*pi, *ptrash)).collect::<Vec<_>>();
+                        let py_ptrash = dp[pi]
+                            .iter()
+                            .map(|(pi, ptrash)| (*pi, *ptrash))
+                            .collect::<Vec<_>>();
                         for (py, ptrash) in py_ptrash {
                             // ignore
                             {
@@ -5334,7 +5346,11 @@ mod solver {
                 if x0 < W {
                     let bw = W - x0;
                     let mut y0 = 0;
-                    let mut ais = remains.iter().copied().map(|i| (a[i], i)).collect::<Vec<_>>();
+                    let mut ais = remains
+                        .iter()
+                        .copied()
+                        .map(|i| (a[i], i))
+                        .collect::<Vec<_>>();
                     ais.sort();
                     for (a, i) in ais.into_iter().rev() {
                         let bh = (a + bw - 1) / bw;
