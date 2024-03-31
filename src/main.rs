@@ -4942,7 +4942,7 @@ mod solver {
         a: Vec<Vec<usize>>,
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
-    const LIMIT_TIME_US: u128 = 2_900_000;
+    const LIMIT_TIME_US: u128 = 2_870_000;
     const QUE_LEN_MAX: usize = 50;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
@@ -5007,11 +5007,6 @@ mod solver {
             let (dp_cost, dp_ans) = self.solve_dp();
             if cost.chmin(dp_cost) {
                 ans = dp_ans;
-            }
-            // for extreme high density
-            let (greedy_cost, greedy_ans) = self.solve_greedy();
-            if cost.chmin(greedy_cost) {
-                ans = greedy_ans;
             }
             // for low density
             let (beam_cost, beam_ans) = self.solve_beam();
@@ -5290,7 +5285,7 @@ mod solver {
             let mut remains = (0..self.n).collect::<BTreeSet<_>>();
             let mut x0 = 0;
             let mut rectis = vec![];
-            let mut dp = vec![vec![(self.n, 0, 0); W + 1]; remains.len() + 1];
+            let mut dp = vec![vec![(self.n, Reverse(0), 0); W + 1]; remains.len() + 1];
             let mut pre = vec![vec![0; W + 1]; remains.len() + 1];
             while let Some(&mi) = remains.last() {
                 remains.remove(&mi);
@@ -5298,17 +5293,17 @@ mod solver {
                 let mut cols = vec![];
                 for bw in (1..=(W - x0))
                     .filter(|&bw| (a[mi] + bw - 1) / bw <= W)
-                    .take(30)
+                    .take(40)
                 {
                     let max_blk_bh = (a[mi] + bw - 1) / bw;
-                    dp[0][max_blk_bh] = (mi, bw, bw * W - a[mi]);
+                    dp[0][max_blk_bh] = (mi, Reverse(bw), bw * W - a[mi]);
                     let mut min_trash = bw * W - a[mi];
                     let mut min_trash_at = (0, max_blk_bh);
                     for (pi, ai) in remains.iter().copied().rev().enumerate() {
                         let bh = (a[ai] + bw - 1) / bw;
                         let ni = pi + 1;
                         for py in max_blk_bh..=W {
-                            let (ci, cbw, ptrash) = dp[pi][py];
+                            let (ci, Reverse(cbw), ptrash) = dp[pi][py];
                             if ci != mi || cbw != bw {
                                 continue;
                             }
@@ -5316,7 +5311,7 @@ mod solver {
                             {
                                 let ny = py;
                                 let ntrash = ptrash;
-                                if dp[ni][ny].chmin((mi, bw, ntrash)) {
+                                if dp[ni][ny].chmin((mi, Reverse(bw), ntrash)) {
                                     pre[ni][ny] = self.n;
                                 }
                             }
@@ -5325,7 +5320,7 @@ mod solver {
                                 let ny = py + bh;
                                 if ny <= W {
                                     let ntrash = ptrash - a[ai];
-                                    if dp[ni][ny].chmin((mi, bw, ntrash)) {
+                                    if dp[ni][ny].chmin((mi, Reverse(bw), ntrash)) {
                                         if min_trash.chmin(ntrash) {
                                             min_trash_at = (ni, ny);
                                         }
@@ -5373,13 +5368,13 @@ mod solver {
                     ais.sort();
                     for (a, i) in ais.into_iter().rev() {
                         let bh = (a + bw - 1) / bw;
-                        let y1 = y0 + bh;
-                        if y1 > W {
-                            break;
-                        }
+                        let y1 = min(y0 + bh, W);
                         rectis.push((Rect::new(y0, x0, y1, W), i));
                         remains.remove(&i);
                         y0 = y1;
+                        if y0 >= W {
+                            break;
+                        }
                     }
                 }
             }
