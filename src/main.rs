@@ -60,6 +60,7 @@ mod change_min_max {
         fn chmax(&mut self, rhs: T) -> bool;
     }
     impl<T: PartialOrd + Copy> ChangeMinMax<T> for T {
+        #[inline(always)]
         fn chmin(&mut self, rhs: T) -> bool {
             if *self > rhs {
                 *self = rhs;
@@ -68,6 +69,7 @@ mod change_min_max {
                 false
             }
         }
+        #[inline(always)]
         fn chmax(&mut self, rhs: T) -> bool {
             if *self < rhs {
                 *self = rhs;
@@ -78,6 +80,7 @@ mod change_min_max {
         }
     }
     impl<T: PartialOrd + Copy> ChangeMinMax<T> for Option<T> {
+        #[inline(always)]
         fn chmin(&mut self, rhs: T) -> bool {
             if let Some(val) = *self {
                 if val > rhs {
@@ -91,6 +94,7 @@ mod change_min_max {
                 true
             }
         }
+        #[inline(always)]
         fn chmax(&mut self, rhs: T) -> bool {
             if let Some(val) = *self {
                 if val < rhs {
@@ -4548,7 +4552,7 @@ mod solver {
                         }
                         if v == 0 {
                             debug_assert!(dv > 0);
-                            y0 = x;
+                            y0 = y;
                         }
                         v += dv;
                         if v == 0 {
@@ -4569,8 +4573,9 @@ mod solver {
                             hs.entry(y).or_insert(vec![]).push(x);
                         }
                     }
-                    for (_x, mut xs) in hs {
+                    for (_y, mut xs) in hs {
                         xs.sort();
+                        debug_assert!(xs.len() % 2 == 0);
                         let mut x0 = 0;
                         for (i, x) in xs.into_iter().enumerate() {
                             if i % 2 == 0 {
@@ -4590,6 +4595,7 @@ mod solver {
                     }
                     for (_x, mut ys) in vs {
                         ys.sort();
+                        debug_assert!(ys.len() % 2 == 0);
                         let mut y0 = 0;
                         for (i, y) in ys.into_iter().enumerate() {
                             if i % 2 == 0 {
@@ -4936,7 +4942,7 @@ mod solver {
         a: Vec<Vec<usize>>,
         divs: Vec<Vec<Vec<(usize, usize)>>>,
     }
-    const GEN_SEED_TIME: u128 = 2_500_000;
+    const LIMIT_TIME_US: u128 = 2_900_000;
     const QUE_LEN_MAX: usize = 50;
     impl Solver {
         fn answer(&self, rects: Vec<Vec<Rect>>) {
@@ -4994,22 +5000,34 @@ mod solver {
             Self { t0, d, n, a, divs }
         }
         pub fn solve(&self) {
-            //self.solve_pack();
-            let (beam_cost, beam_ans) = self.solve_beam();
+            let mut cost = None;
+            let mut ans = vec![];
+
+            // for high density
+            let (dp_cost, dp_ans) = self.solve_dp();
+            if cost.chmin(dp_cost) {
+                ans = dp_ans;
+            }
+            // for extreme high density
             let (greedy_cost, greedy_ans) = self.solve_greedy();
-            let (cost, ans) = if beam_cost < greedy_cost {
-                (beam_cost, beam_ans)
-            } else {
-                (greedy_cost, greedy_ans)
-            };
+            if cost.chmin(greedy_cost) {
+                ans = greedy_ans;
+            }
+            // for low density
+            let (beam_cost, beam_ans) = self.solve_beam();
+            if cost.chmin(beam_cost) {
+                ans = beam_ans;
+            }
+
             self.answer(ans);
-            eprintln!("{}", cost + 1);
+            eprintln!("{}", cost.unwrap() + 1);
         }
         fn solve_beam(&self) -> (usize, Vec<Vec<Rect>>) {
             let bin_ws = self.gen_bin_w();
             let mut statess: Vec<Vec<(State, usize)>> = vec![];
+            let t_base = self.t0.elapsed().as_micros();
             for (di, a) in self.a.iter().enumerate() {
-                let lim_t = GEN_SEED_TIME * (di as u128 + 1) / self.d as u128;
+                let lim_t = t_base + (LIMIT_TIME_US - t_base) * (di as u128 + 1) / self.d as u128;
                 let states = self.construct(
                     lim_t,
                     a,
@@ -5272,45 +5290,46 @@ mod solver {
             let mut remains = (0..self.n).collect::<BTreeSet<_>>();
             let mut x0 = 0;
             let mut rectis = vec![];
+            let mut dp = vec![vec![(self.n, 0, 0); W + 1]; remains.len() + 1];
+            let mut pre = vec![vec![0; W + 1]; remains.len() + 1];
             while let Some(&mi) = remains.last() {
                 remains.remove(&mi);
                 let mut min_trash_rate = None;
                 let mut cols = vec![];
-                for bw in (1..).take_while(|&sqbw| sqbw < W / 4) {
+                for bw in (1..=(W - x0))
+                    .filter(|&bw| (a[mi] + bw - 1) / bw <= W)
+                    .take(30)
+                {
                     let max_blk_bh = (a[mi] + bw - 1) / bw;
-                    if max_blk_bh > W {
-                        continue;
-                    }
-                    let mut dp = vec![BTreeMap::new(); remains.len() + 1];
-                    let mut pre = vec![BTreeMap::new(); remains.len() + 1];
-                    dp[0].insert(max_blk_bh, bw * W - a[mi]);
+                    dp[0][max_blk_bh] = (mi, bw, bw * W - a[mi]);
                     let mut min_trash = bw * W - a[mi];
                     let mut min_trash_at = (0, max_blk_bh);
                     for (pi, ai) in remains.iter().copied().rev().enumerate() {
+                        let bh = (a[ai] + bw - 1) / bw;
                         let ni = pi + 1;
-                        let py_ptrash = dp[pi]
-                            .iter()
-                            .map(|(pi, ptrash)| (*pi, *ptrash))
-                            .collect::<Vec<_>>();
-                        for (py, ptrash) in py_ptrash {
+                        for py in max_blk_bh..=W {
+                            let (ci, cbw, ptrash) = dp[pi][py];
+                            if ci != mi || cbw != bw {
+                                continue;
+                            }
                             // ignore
                             {
                                 let ny = py;
                                 let ntrash = ptrash;
-                                if dp[ni].entry(ny).or_insert(INF).chmin(ntrash) {
-                                    pre[ni].insert(ny, self.n);
+                                if dp[ni][ny].chmin((mi, bw, ntrash)) {
+                                    pre[ni][ny] = self.n;
                                 }
                             }
                             // use
                             {
-                                let ny = py + (a[ai] + bw - 1) / bw;
+                                let ny = py + bh;
                                 if ny <= W {
                                     let ntrash = ptrash - a[ai];
-                                    if dp[ni].entry(ny).or_insert(INF).chmin(ntrash) {
+                                    if dp[ni][ny].chmin((mi, bw, ntrash)) {
                                         if min_trash.chmin(ntrash) {
                                             min_trash_at = (ni, ny);
                                         }
-                                        pre[ni].insert(ny, ai);
+                                        pre[ni][ny] = ai;
                                     }
                                 }
                             }
@@ -5321,7 +5340,7 @@ mod solver {
                         cols = vec![(Rect::new(0, x0, max_blk_bh, x1), mi)];
                         let (mut dpi, mut y1) = min_trash_at;
                         while dpi > 0 {
-                            let ai = pre[dpi][&y1];
+                            let ai = pre[dpi][y1];
                             if ai < self.n {
                                 let bh = (a[ai] + bw - 1) / bw;
                                 let y0 = y1 - bh;
@@ -5381,14 +5400,29 @@ mod solver {
             assert!(rects.len() == self.n);
             rects
         }
-        fn solve_pack(&self) {
+        fn solve_dp(&self) -> (usize, Vec<Vec<Rect>>) {
             let mut ans = vec![];
-            for (di, (a, divs)) in self.a.iter().zip(self.divs.iter()).enumerate() {
+            let mut pre_partition = None;
+            let mut score = 0;
+            for (_di, (a, divs)) in self.a.iter().zip(self.divs.iter()).enumerate() {
                 let rects = self.pack(a, divs);
+                let area_cost = a
+                    .iter()
+                    .zip(rects.iter())
+                    .map(|(a, rect)| a.saturating_sub(rect.area()))
+                    .sum::<usize>()
+                    * 100;
+                score += area_cost;
+                let partition = Partition::new(&rects);
+                if let Some(pre_partition) = pre_partition {
+                    let delta = partition.dist(&pre_partition);
+                    score += delta;
+                }
+                pre_partition = Some(partition);
                 ans.push(rects);
             }
-            self.answer(ans);
-            std::process::exit(0);
+            //self.answer(ans);
+            (score, ans)
         }
     }
 }
