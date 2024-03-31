@@ -4986,6 +4986,7 @@ mod solver {
             Self { t0, d, n, a, divs }
         }
         pub fn solve(&self) {
+            //self.solve_pack();
             let (beam_cost, beam_ans) = self.solve_beam();
             let (greedy_cost, greedy_ans) = self.solve_greedy();
             let (cost, ans) = if beam_cost < greedy_cost {
@@ -5257,6 +5258,121 @@ mod solver {
                 ans.push(rects);
             }
             (cost_sum, ans)
+        }
+        fn pack(&self, a: &[usize], _divs: &[Vec<(usize, usize)>]) -> Vec<Rect> {
+            let mut remains = (0..self.n).collect::<BTreeSet<_>>();
+            let mut x0 = 0;
+            let mut rectis = vec![];
+            while let Some(&mi) = remains.last() {
+                remains.remove(&mi);
+                let mut min_trash_rate = None;
+                let mut cols = vec![];
+                for bw in (1..).take_while(|&sqbw| sqbw < W / 4) { 
+                    let max_blk_bh = (a[mi] + bw - 1) / bw;
+                    if max_blk_bh > W {
+                        continue;
+                    }
+                    let mut dp = vec![BTreeMap::new(); remains.len() + 1];
+                    let mut pre = vec![BTreeMap::new(); remains.len() + 1];
+                    dp[0].insert(max_blk_bh, bw * W - a[mi]);
+                    let mut min_trash = bw * W - a[mi];
+                    let mut min_trash_at = (0, max_blk_bh);
+                    for (pi, ai) in remains.iter().copied().rev().enumerate() {
+                        let ni = pi + 1;
+                        let py_ptrash = dp[pi].iter().map(|(pi, ptrash)| (*pi, *ptrash)).collect::<Vec<_>>();
+                        for (py, ptrash) in py_ptrash {
+                            // ignore
+                            {
+                                let ny = py;
+                                let ntrash = ptrash;
+                                if dp[ni].entry(ny).or_insert(INF).chmin(ntrash) {
+                                    pre[ni].insert(ny, self.n);
+                                }
+                            }
+                            // use
+                            {
+                                let ny = py + (a[ai] + bw - 1) / bw;
+                                if ny <= W {
+                                    let ntrash = ptrash - a[ai];
+                                    if dp[ni].entry(ny).or_insert(INF).chmin(ntrash) {
+                                        if min_trash.chmin(ntrash) {
+                                            min_trash_at = (ni, ny);
+                                        }
+                                        pre[ni].insert(ny, ai);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if min_trash_rate.chmin(min_trash as f64 / bw as f64) {
+                        let x1 = x0 + bw;
+                        cols = vec![(Rect::new(0, x0, max_blk_bh, x1), mi)];
+                        let (mut dpi, mut y1) = min_trash_at;
+                        while dpi > 0 {
+                            let ai = pre[dpi][&y1];
+                            if ai < self.n {
+                                let bh = (a[ai] + bw - 1) / bw;
+                                let y0 = y1 - bh;
+                                cols.push((Rect::new(y0, x0, y1, x1), ai));
+                                y1 = y0;
+                            }
+                            dpi -= 1;
+                        }
+                    }
+                }
+                if cols.is_empty() {
+                    remains.insert(mi);
+                    break;
+                }
+                x0 = cols[0].0.x1;
+                for (rect, ai) in cols {
+                    rectis.push((rect, ai));
+                    assert!((ai != mi) == remains.remove(&ai));
+                }
+            }
+            if !remains.is_empty() {
+                if x0 < W {
+                    let bw = W - x0;
+                    let mut y0 = 0;
+                    let mut ais = remains.iter().copied().map(|i| (a[i], i)).collect::<Vec<_>>();
+                    ais.sort();
+                    for (a, i) in ais.into_iter().rev() {
+                        let bh = (a + bw - 1) / bw;
+                        let y1 = y0 + bh;
+                        if y1 > W {
+                            break;
+                        }
+                        rectis.push((Rect::new(y0, x0, y1, W), i));
+                        remains.remove(&i);
+                        y0 = y1;
+                    }
+                }
+            }
+            if !remains.is_empty() {
+                rectis.sort_by_cached_key(|(r, _i)| Reverse(r.area()));
+                let (dr, di) = rectis.pop().unwrap();
+                remains.insert(di);
+                for (idx, &di) in remains.iter().enumerate() {
+                    if idx == remains.len() - 1 {
+                        rectis.push((Rect::new(dr.y0, dr.x0 + idx, dr.y1, dr.x1), di));
+                    } else {
+                        rectis.push((Rect::new(dr.y0, dr.x0 + idx, dr.y1, dr.x0 + idx + 1), di));
+                    }
+                }
+            }
+            rectis.sort_by_cached_key(|(_r, i)| *i);
+            let rects = rectis.into_iter().map(|(r, _)| r).collect::<Vec<_>>();
+            assert!(rects.len() == self.n);
+            rects
+        }
+        fn solve_pack(&self) {
+            let mut ans = vec![];
+            for (di, (a, divs)) in self.a.iter().zip(self.divs.iter()).enumerate() {
+                let rects = self.pack(a, divs);
+                ans.push(rects);
+            }
+            self.answer(ans);
+            std::process::exit(0);
         }
     }
 }
